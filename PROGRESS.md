@@ -34,9 +34,9 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
 | T0 | Translate the research doc to English (`docs/research/fitness-app-options.md`) | done (no agent review) | Translated by the boss agent (documentation, not production code). Reviewer/QA were not run because no agent-delegation tool was available. |
-| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | in progress | B1 resolved by D8. |
-| T2 | Zod schemas for the domain model | todo | |
-| T3 | Exercise catalog (~80–120 exercises) | todo | |
+| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | done (pending review/QA) | pnpm workspaces (`packages/*`, `apps/*`); strict `tsconfig.base.json`; ESLint flat config (typescript-eslint strictTypeChecked) + Prettier; Vitest; `.github/workflows/ci.yml` (frozen install, lint, format check, typecheck, test, build). TypeScript pinned to 6.0.x because typescript-eslint 8 supports `<6.1`. `apps/mobile` and `supabase/` are README-only placeholders. |
+| T2 | Zod schemas for the domain model | done (pending review/QA) | `packages/engine/src/schemas` (Zod 4, snake_case fields). Profile includes PAR-Q+ answers, `training_slots` (when/where) and `parqHasRedFlag`. Plan is nested (weeks → sessions → exercises) with parent-id checks. Unknown `exercise_id` is rejected via `createCatalogValidators(catalog)`. |
+| T3 | Exercise catalog (~80–120 exercises) | done (pending review/QA) | 118 exercises in `packages/engine/src/catalog/exercises.ts` (typed TS module). 11 patterns (research list + `lunge`, `isolation`); tiers bodyweight / dumbbells (+bench) / full_gym in `src/equipment.ts`. Tests: schema validity, unique ids, substitutes exist and share the pattern, every pattern covered in every tier. |
 | T4 | `generatePlan`, templates and the PAR-Q+ gate | todo | Feature A |
 | T5 | `nextTargets`, e1RM and PRs | todo | Feature B |
 | T6 | `rescheduleWeek` and minimum dose | todo | Feature C |
@@ -51,3 +51,4 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 - 2026-10-08: Research done (boss agent). The user chose English. Decisions D2–D7 follow the boss agent's recommendations.
 - 2026-10-08: T0 done (English research doc). T1–T11 blocked: the boss session has no agent-delegation tool and must not write production code itself. Escalated to the user (D8).
 - 2026-10-08: B1 resolved (D8): the main session orchestrates. Starting batch 1 (T1–T3).
+- 2026-10-08: Batch 1 (T1–T3) implemented by the developer agent: monorepo + CI, domain Zod schemas, 118-exercise catalog. `pnpm install && pnpm lint && pnpm typecheck && pnpm test && pnpm build` green (178 tests). Awaiting reviewer and QA.
