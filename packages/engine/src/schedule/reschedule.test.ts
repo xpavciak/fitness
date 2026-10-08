@@ -28,26 +28,28 @@ import {
 import { applyScheduleChanges, replacePlannedSession } from './apply.js';
 import {
   proposeReschedules,
+  minutesPhrase,
   rescheduleWeek,
   type RescheduleConstraints,
   type RescheduleEvent,
 } from './reschedule.js';
-import { minimumDoseSession, shortenSession } from './session-variants.js';
+import { mergeSessionExercises, minimumDoseSession, shortenSession } from './session-variants.js';
 
 const validators = createCatalogValidators(EXERCISE_CATALOG);
 
+/** `_plan` is kept for readability at call sites; the plan id comes from the week (S7). */
 function constraints(
-  plan: Plan,
+  _plan: Plan,
   profile: Profile,
   today: string,
   extra: Partial<RescheduleConstraints> = {},
 ): RescheduleConstraints {
   return {
-    plan_id: plan.id,
     today,
     now: NOW,
     newId: createSeededIdGenerator(99),
     profile,
+    neighborSessions: [],
     ...extra,
   };
 }
@@ -210,6 +212,63 @@ describe('rescheduleWeek: missed sessions', () => {
   });
 });
 
+describe('rescheduleWeek: wording and inputs', () => {
+  it('uses past tense for a past session and "can\'t make" for today or later', () => {
+    const fullBodyC = sessionByTitle(fbWeek, 'Full Body C'); // Friday 2026-10-16
+    const reasonOn = (today: string) =>
+      must(
+        rescheduleWeek(
+          fbWeek,
+          { type: 'missed', session_id: fullBodyC.id },
+          constraints(fbPlan, fbProfile, today),
+        )[0],
+      ).reason;
+    expect(reasonOn('2026-10-17')).toMatch(/^You missed Full Body C on Friday\./);
+    expect(reasonOn('2026-10-16')).toMatch(/^You can't make Full Body C on Friday\./);
+    expect(reasonOn('2026-10-14')).toMatch(/^You can't make Full Body C on Friday\./);
+    expect(reasonOn('2026-10-14')).not.toMatch(/missed/);
+  });
+
+  it('takes plan_id from the week (S7)', () => {
+    const changes = rescheduleWeek(
+      fbWeek,
+      { type: 'skip', session_id: sessionByTitle(fbWeek, 'Full Body B').id },
+      constraints(fbPlan, fbProfile, '2026-10-12'),
+    );
+    expect(must(changes[0]).plan_id).toBe(fbWeek.plan_id);
+  });
+
+  it.each([
+    [8, 'an 8-minute'],
+    [10, 'a 10-minute'],
+    [11, 'an 11-minute'],
+    [12, 'a 12-minute'],
+    [18, 'an 18-minute'],
+    [28, 'a 28-minute'],
+    [80, 'an 80-minute'],
+  ])('minutesPhrase(%i) = %s', (minutes, phrase) => {
+    expect(minutesPhrase(minutes)).toBe(phrase);
+  });
+
+  it('merges stay within session_minutes + 10% and borrow only key exercises', () => {
+    const lowerA = sessionByTitle(ulWeek, 'Lower A');
+    const lowerB = sessionByTitle(ulWeek, 'Lower B');
+    for (const minutes of [20, 30, 45]) {
+      const merged = mergeSessionExercises(lowerB, lowerA, {
+        newId: createSeededIdGenerator(3),
+        maxMinutes: Math.floor(minutes * 1.1),
+      });
+      expect(merged.session.est_minutes).toBeLessThanOrEqual(Math.floor(minutes * 1.1));
+      const lowerAIds = new Set(lowerA.exercises.map((pe) => pe.exercise_id));
+      const lowerBIds = new Set(lowerB.exercises.map((pe) => pe.exercise_id));
+      for (const pe of merged.session.exercises.filter((e) => !lowerBIds.has(e.exercise_id))) {
+        expect(lowerAIds.has(pe.exercise_id)).toBe(true);
+        expect(pe.is_key).toBe(true);
+      }
+    }
+  });
+});
+
 describe('rescheduleWeek: shorten and skip', () => {
   it('shortens to at most 30 minutes with every key exercise', () => {
     const session = sessionByTitle(fbWeek, 'Full Body A');
@@ -249,6 +308,36 @@ describe('rescheduleWeek: shorten and skip', () => {
     expect(dose.variant).toBe('minimum_dose');
     expect(dose.est_minutes).toBe(change.new_est_minutes);
   });
+
+  it.each([1, 5, 9])('proposes only a skip with %i minutes (S8)', (minutes) => {
+    const session = sessionByTitle(fbWeek, 'Full Body A');
+    const proposals = proposeReschedules(
+      fbWeek,
+      { type: 'shorten', session_id: session.id, available_minutes: minutes },
+      constraints(fbPlan, fbProfile, '2026-10-12'),
+    );
+    expect(proposals.map((p) => p.kind)).toEqual(['skip']);
+    expect(proposals[0]?.changes[0]?.reason).toMatch(/too short/);
+  });
+
+  it.each([10, 11, 12, 13, 14, 15])(
+    'the minimum dose never exceeds %i available minutes',
+    (minutes) => {
+      for (const session of fbWeek.sessions) {
+        const proposals = proposeReschedules(
+          fbWeek,
+          { type: 'shorten', session_id: session.id, available_minutes: minutes },
+          constraints(fbPlan, fbProfile, '2026-10-12'),
+        );
+        const dose = must(proposals[0]?.changes[0]);
+        expect(dose.new_est_minutes).toBeGreaterThanOrEqual(10);
+        expect(dose.new_est_minutes).toBeLessThanOrEqual(minutes);
+        const applied = applyScheduleChanges(fbPlan, [dose], applyOpts(fbProfile));
+        const stored = must(must(applied.weeks[0]).sessions.find((s) => s.id === session.id));
+        expect(stored.est_minutes).toBe(dose.new_est_minutes);
+      }
+    },
+  );
 
   it('changes nothing when the full session fits the available time', () => {
     const session = sessionByTitle(fbWeek, 'Full Body A');

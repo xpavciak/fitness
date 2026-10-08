@@ -31,19 +31,19 @@ function reschedule(
   withNeighbours = true,
 ) {
   const week = must(plan.weeks[weekIndex]);
+  // D11: neighborSessions is required; `withNeighbours = false` passes [] explicitly.
   const neighborSessions = withNeighbours
     ? [
         ...(plan.weeks[weekIndex - 1]?.sessions ?? []),
         ...(plan.weeks[weekIndex + 1]?.sessions ?? []),
       ]
-    : undefined;
+    : [];
   const constraints = {
-    plan_id: plan.id,
     today,
     now: NOW,
     newId: createSeededIdGenerator(4242),
     profile,
-    ...(neighborSessions ? { neighborSessions } : {}),
+    neighborSessions,
   };
   const fullEvent: RescheduleEvent = { ...event, session_id: session.id };
   const changes = rescheduleWeek(week, fullEvent, constraints);
@@ -147,12 +147,22 @@ describe('QA batch 2: missed sessions on Monday, mid-week and Sunday', () => {
     expect(must(changes[0]).reason).toMatch(/last day of this training week/);
   });
 
-  // BUG (minor): when the caller omits the optional `neighborSessions`, a missed Monday session
-  // is moved to Sunday, back to back with next Monday's session for the same muscles. The
-  // acceptance criterion says "never two sessions for the same muscle group on consecutive days";
-  // the safe result depends on an optional argument. Expected: treat Sunday/Monday as unsafe (or
-  // require neighbours) when they are not supplied.
-  it.fails('BUG: without neighborSessions a move to Sunday collides with next Monday', () => {
+  // QA bug 1, resolved by D11: neighborSessions is required. Passing [] explicitly declares that
+  // there are no adjacent weeks, so the move to Sunday is then the caller's responsibility; with
+  // the real neighbours (default above) the plan stays conflict-free.
+  it('D11: neighborSessions is required; omitting it throws', () => {
+    const monday = must(fbWeek1.sessions[0]);
+    expect(() =>
+      rescheduleWeek(fbWeek1, { type: 'missed', session_id: monday.id }, {
+        today: '2026-10-20',
+        now: NOW,
+        newId: createSeededIdGenerator(1),
+        profile: fbProfile,
+      } as never),
+    ).toThrow(/neighborSessions is required/);
+  });
+
+  it('with neighbours a missed Monday never collides with next Monday', () => {
     const monday = must(fbWeek1.sessions[0]);
     const { next } = reschedule(
       fbPlan,
@@ -161,14 +171,15 @@ describe('QA batch 2: missed sessions on Monday, mid-week and Sunday', () => {
       monday,
       { type: 'missed' },
       '2026-10-20',
-      false,
+      true,
     );
     expect(consecutiveMuscleConflicts(allSessions(next), lookup)).toEqual([]);
   });
 
   // BUG (minor): a Monday session reported missed after its week ended is skipped with the reason
   // "That was the last day of this training week", which is false for a Monday session.
-  it.fails('BUG: a late-reported Monday miss says it was the last day of the week', () => {
+  // Fixed (QA bug 2): the reason says the week has ended.
+  it('a late-reported Monday miss says the week has ended, not "last day"', () => {
     const monday = must(fbWeek1.sessions[0]);
     const { changes } = reschedule(fbPlan, fbProfile, 1, monday, { type: 'missed' }, '2026-10-28');
     expect(must(changes[0]).reason).not.toMatch(/last day of this training week/);
@@ -177,7 +188,8 @@ describe('QA batch 2: missed sessions on Monday, mid-week and Sunday', () => {
   // BUG (minor): a merge always keeps every key exercise of both sessions at full sets, so the
   // absorbing session can far exceed the user's session length (30 min -> 46 min here) and the
   // plan then fails `validatePlanRules` ("est_minutes 46 is outside 30 +/- 10%").
-  it.fails('BUG: merging a missed session makes a 30-minute session last 46 minutes', () => {
+  // Fixed (QA bug 3): merges stay within session_minutes + 10%.
+  it('merging a missed session keeps a 30-minute session within 33 minutes', () => {
     const profile = makeProfile({
       equipment: [],
       days_per_week: 2,
@@ -256,7 +268,8 @@ describe('QA batch 2: shorten and skip', () => {
   // BUG (minor): with only 10 minutes available the proposal is an 11-minute minimum dose
   // ("With 10 minutes, a 11-minute minimum-dose circuit ..."): longer than the user has, and
   // "a 11-minute" should read "an 11-minute".
-  it.fails('BUG: a 10-minute window gets an 11-minute minimum dose', () => {
+  // Fixed (QA bug 4, S8): the minimum dose never exceeds the available minutes.
+  it('a 10-minute window gets a minimum dose of at most 10 minutes', () => {
     const fullBodyA = must(fbWeek1.sessions[0]);
     const { changes } = reschedule(
       fbPlan,
@@ -269,7 +282,8 @@ describe('QA batch 2: shorten and skip', () => {
     expect(must(changes[0]).new_est_minutes).toBeLessThanOrEqual(10);
   });
 
-  it.fails('BUG: reasons use "a 11-minute" / "a 18-minute" instead of "an"', () => {
+  // Fixed (QA bug 5).
+  it('reasons never use "a 8/11/18-minute"', () => {
     const fullBodyA = must(fbWeek1.sessions[0]);
     const { changes } = reschedule(
       fbPlan,
@@ -285,7 +299,8 @@ describe('QA batch 2: shorten and skip', () => {
   // BUG (minor): the minimum dose adds sets round-robin up to 4 per exercise, so it can prescribe
   // MORE sets of an exercise than the full session did (push-up 3 -> 4 here) and push a
   // beginner's weekly volume above WEEKLY_SET_CAPS (glutes 14 > 12 after a 12-minute shorten).
-  it.fails('BUG: the minimum dose prescribes more sets than the full session', () => {
+  // Fixed (QA bug 6).
+  it('the minimum dose never prescribes more sets than the full session', () => {
     const profile = makeProfile({
       equipment: [],
       session_minutes: 30,
@@ -304,7 +319,7 @@ describe('QA batch 2: shorten and skip', () => {
     }
   });
 
-  it.fails('BUG: a 12-minute shorten can push weekly sets above the beginner cap', () => {
+  it('a 12-minute shorten never pushes weekly sets above the beginner cap', () => {
     const profile = makeProfile({
       equipment: [],
       session_minutes: 30,

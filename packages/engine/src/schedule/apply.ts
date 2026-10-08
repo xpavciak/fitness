@@ -2,6 +2,7 @@ import { EXERCISE_CATALOG } from '../catalog/index.js';
 import { isWithinWeek } from '../dates.js';
 import type { IdGenerator } from '../ids.js';
 import { occupiesDate } from '../plan/rules.js';
+import { DURATION_TOLERANCE } from '../plan/templates.js';
 import {
   ScheduleChangeSchema,
   createCatalogValidators,
@@ -22,8 +23,8 @@ import {
 export interface ApplyScheduleOptions {
   /** Ids for exercises copied by a merge or added by a minimum dose. */
   newId: IdGenerator;
-  /** Equipment and limitations for minimum-dose sessions. */
-  profile: Pick<Profile, 'equipment' | 'limitations'>;
+  /** Equipment and limitations for minimum-dose sessions; session length caps merges. */
+  profile: Pick<Profile, 'equipment' | 'limitations' | 'session_minutes'>;
   catalog?: readonly Exercise[];
 }
 
@@ -33,9 +34,9 @@ export interface ApplyScheduleOptions {
  * - move: `scheduled_date` = `to_date` (same week, a free day), status `moved`.
  * - skip: status `skipped`.
  * - merge: status `merged`; the absorbing session (same week, planned or moved) gets the content
- *   from `mergeSessionExercises`.
- * - shorten: `new_est_minutes` <= 15 builds the minimum dose (`minimumDoseSession`), otherwise the
- *   short variant (`shortenSession`) within `new_est_minutes`.
+ *   from `mergeSessionExercises`, within `session_minutes` + 10%.
+ * - shorten: `new_est_minutes` <= 15 builds the minimum dose (`minimumDoseSession`) within
+ *   `new_est_minutes`, otherwise the short variant (`shortenSession`) within `new_est_minutes`.
  * Throws on a change for another plan, an unknown session, a session that is already done,
  * skipped or merged, a stale `from_date`, or a move outside the week or onto a taken day.
  */
@@ -101,13 +102,22 @@ function applyOne(
         throw new Error(`Merge target ${targetId} is not in the same week as ${session.title}`);
       }
       assertReschedulable(target);
-      week.sessions[targetIndex] = mergeSessionExercises(target, session, opts.newId, catalog);
+      week.sessions[targetIndex] = mergeSessionExercises(target, session, {
+        newId: opts.newId,
+        maxMinutes: Math.floor(opts.profile.session_minutes * (1 + DURATION_TOLERANCE)),
+        catalog,
+      }).session;
       return { ...session, status: 'merged' };
     }
     case 'shorten': {
       const minutes = required(change.new_est_minutes, 'new_est_minutes');
       if (minutes <= MINIMUM_DOSE_MINUTES.max) {
-        return minimumDoseSession(session, { profile: opts.profile, newId: opts.newId, catalog });
+        return minimumDoseSession(session, {
+          profile: opts.profile,
+          newId: opts.newId,
+          catalog,
+          maxMinutes: Math.max(minutes, MINIMUM_DOSE_MINUTES.min),
+        });
       }
       const short = shortenSession(session, minutes, catalog);
       if (!short) {

@@ -1,13 +1,14 @@
 import { EXERCISE_CATALOG } from '../catalog/index.js';
 import { createCatalogLookup } from '../catalog/lookup.js';
 import type { IdGenerator } from '../ids.js';
+import { countsTowardVolume } from '../plan/rules.js';
 import { isEligible, rankCandidates } from '../plan/select.js';
 import {
   estimateSessionMinutes,
   estimateSessionSeconds,
-  secondsPerSet,
+  TIME_MODEL,
 } from '../plan/session-time.js';
-import { TIMED_SCHEME } from '../plan/templates.js';
+import { CONDITIONING_EXERCISES, TIMED_SCHEME } from '../plan/templates.js';
 import type {
   Exercise,
   MovementPattern,
@@ -150,85 +151,187 @@ export interface MinimumDoseOptions {
   profile: Pick<Profile, 'equipment' | 'limitations'>;
   newId: IdGenerator;
   catalog?: readonly Exercise[];
+  /** Longest allowed duration, 10-15 minutes (default 15). */
+  maxMinutes?: number;
+}
+
+/** Hard sets per primary muscle (conditioning and low-stimulus excluded). */
+function muscleSets(exercises: readonly PlannedExercise[], lookup: Lookup): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const pe of exercises) {
+    const exercise = lookup(pe.exercise_id);
+    if (!countsTowardVolume(exercise)) {
+      continue;
+    }
+    for (const muscle of exercise.primary_muscles) {
+      totals.set(muscle, (totals.get(muscle) ?? 0) + pe.sets);
+    }
+  }
+  return totals;
 }
 
 /**
  * The "minimum dose" (research 3.2): a 10-15 minute circuit that keeps the streak alive.
- * Built from the planned session's key exercises when the user can still do them (equipment
- * and current limitations). When they are missing or too few for 10 minutes, it tops up with the
- * session's other exercises, then catalog bodyweight exercises that respect the limitations
- * (those training the session's own muscles first). Circuit rules: one superset group, 30 s rest, sets added round-robin (up to 4)
- * until the session reaches 10 minutes, never above 15. Exercises from the session keep their ids;
- * catalog exercises get new ids. The session keeps its id, date and status.
+ *
+ * - Content: the planned session's key exercises the user can still do (equipment and current
+ *   limitations); when they are missing or too few for 10 minutes, the session's other
+ *   exercises, then catalog bodyweight exercises that respect the limitations (those training the
+ *   session's own muscles first), and as a last resort one easy conditioning block.
+ * - Volume (QA bug 6): an exercise from the session never gets more sets than planned, and hard
+ *   sets per muscle never exceed the full session's, so the weekly caps still hold.
+ * - Circuit: one superset group, 30 s rest, sets added round-robin until the dose reaches 10
+ *   minutes, never above `maxMinutes` (10-15).
+ * Exercises from the session keep their ids; catalog exercises get new ids. The session keeps its
+ * id, date and status.
  */
 export function minimumDoseSession(
   session: PlannedSession,
   opts: MinimumDoseOptions,
 ): PlannedSession {
+  const maxMinutes = opts.maxMinutes ?? MINIMUM_DOSE_MINUTES.max;
+  if (
+    !Number.isInteger(maxMinutes) ||
+    maxMinutes < MINIMUM_DOSE_MINUTES.min ||
+    maxMinutes > MINIMUM_DOSE_MINUTES.max
+  ) {
+    throw new RangeError(
+      `maxMinutes must be an integer from ${MINIMUM_DOSE_MINUTES.min} to ${MINIMUM_DOSE_MINUTES.max}, got ${maxMinutes}`,
+    );
+  }
   const catalog = opts.catalog ?? EXERCISE_CATALOG;
   const lookup = createCatalogLookup(catalog);
   const dose: PlannedSession = { ...session, variant: 'minimum_dose', exercises: [] };
+  // Largest seconds that still round to maxMinutes; 10 minutes is reached at 570 s.
+  const maxSec = maxMinutes * 60 + 29;
+  const minSec = MINIMUM_DOSE_MINUTES.min * 60 - 30;
+  const budget = muscleSets(session.exercises, lookup);
+  const plannedSets = new Map(session.exercises.map((pe) => [pe.id, pe.sets]));
+  const maxSetsOf = (pe: PlannedExercise) =>
+    Math.min(MINIMUM_DOSE_MAX_SETS, plannedSets.get(pe.id) ?? MINIMUM_DOSE_MAX_SETS);
   const asCircuit = (pe: PlannedExercise): PlannedExercise => ({
     ...pe,
     sets: 1,
     rest_sec: MINIMUM_DOSE_REST_SEC,
     superset_group: MINIMUM_DOSE_SUPERSET,
   });
+
   const usable = session.exercises.filter(
     (pe) => !isConditioning(pe, lookup) && isEligible(lookup(pe.exercise_id), opts.profile),
   );
   const keys = usable.filter((pe) => pe.is_key).slice(0, MINIMUM_DOSE_START_EXERCISES);
   const sessionMuscleSet = new Set(usable.flatMap((pe) => lookup(pe.exercise_id).primary_muscles));
-  // Top-ups in order: the session's other exercises, bodyweight options for the same muscles,
-  // then any other bodyweight option (so the dose rarely adds muscles the session did not train).
-  const fallback = [
+  const queue = [
+    ...keys,
     ...usable.filter((pe) => !pe.is_key),
-    ...bodyweightOptions(session, opts, catalog, keys, sessionMuscleSet),
+    ...bodyweightOptions(session, opts, catalog, usable, sessionMuscleSet),
   ].map(asCircuit);
-  const chosen = (keys.length > 0 ? keys : fallback.splice(0, MINIMUM_DOSE_START_EXERCISES)).map(
-    asCircuit,
-  );
-  if (chosen.length === 0) {
-    throw new Error('No exercise is available for a minimum-dose session');
-  }
 
-  const maxSec = MINIMUM_DOSE_MINUTES.max * 60;
-  const minSec = MINIMUM_DOSE_MINUTES.min * 60;
+  const chosen: PlannedExercise[] = [];
   const seconds = () => estimateSessionSeconds(chosen, 'minimum_dose', lookup);
+  const withinBudget = (candidate: readonly PlannedExercise[]) => {
+    const totals = muscleSets(candidate, lookup);
+    return [...totals].every(([muscle, sets]) => sets <= (budget.get(muscle) ?? 0));
+  };
+  const tryAdd = (pe: PlannedExercise): boolean => {
+    const next = [...chosen, pe];
+    if (withinBudget(next) && estimateSessionSeconds(next, 'minimum_dose', lookup) <= maxSec) {
+      chosen.push(pe);
+      return true;
+    }
+    return false;
+  };
+  const tryAddSet = (): boolean => {
+    const ordered = [...chosen].sort((a, b) => a.sets - b.sets);
+    for (const pe of ordered) {
+      if (pe.sets >= maxSetsOf(pe)) {
+        continue;
+      }
+      const index = chosen.indexOf(pe);
+      const next = chosen.map((item, i) => (i === index ? { ...item, sets: item.sets + 1 } : item));
+      if (withinBudget(next) && estimateSessionSeconds(next, 'minimum_dose', lookup) <= maxSec) {
+        chosen[index] = { ...pe, sets: pe.sets + 1 };
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Start with up to three exercises (keys first), then fill to 10 minutes.
+  while (chosen.length < MINIMUM_DOSE_START_EXERCISES && queue.length > 0) {
+    const next = queue.shift();
+    if (next) {
+      tryAdd(next);
+    }
+  }
   while (seconds() < minSec) {
-    const next = chosen
-      .filter((pe) => pe.sets < MINIMUM_DOSE_MAX_SETS)
-      .sort((a, b) => a.sets - b.sets)[0];
-    const extra = next ? secondsPerSet(next, lookup(next.exercise_id)) : Infinity;
-    if (next && seconds() + extra <= maxSec) {
-      next.sets += 1;
+    if (tryAddSet()) {
       continue;
     }
-    const added = fallback.shift();
-    if (!added) {
-      throw new Error('Cannot build a 10-15 minute minimum-dose session');
+    const next = queue.shift();
+    if (next) {
+      tryAdd(next);
+      continue;
     }
-    chosen.push(added);
+    addConditioning(chosen, session, opts, catalog, minSec + 30 - seconds());
+    break;
   }
-  while (seconds() > maxSec && chosen.length > 1) {
-    chosen.pop();
+  if (chosen.length === 0 || seconds() > maxSec) {
+    throw new Error(`Cannot build a ${MINIMUM_DOSE_MINUTES.min}-${maxMinutes} minute minimum dose`);
   }
   return finalize(dose, chosen, lookup);
 }
 
+/** One easy conditioning block (rest 0) lasting about `missingSec` including its transition. */
+function addConditioning(
+  chosen: PlannedExercise[],
+  session: PlannedSession,
+  opts: MinimumDoseOptions,
+  catalog: readonly Exercise[],
+  missingSec: number,
+): void {
+  const ctx = {
+    catalog,
+    equipment: opts.profile.equipment,
+    limitations: opts.profile.limitations,
+    level: 'beginner',
+  } as const;
+  const exercise = rankCandidates({ pattern: 'cardio' }, ctx).find((candidate) =>
+    CONDITIONING_EXERCISES.includes(candidate.id),
+  );
+  if (!exercise) {
+    throw new Error('No conditioning exercise is available to complete the minimum dose');
+  }
+  const duration = Math.max(30, Math.ceil((missingSec - TIME_MODEL.transitionSec) / 5) * 5);
+  chosen.push({
+    id: opts.newId(),
+    planned_session_id: session.id,
+    exercise_id: exercise.id,
+    order: 0,
+    sets: 1,
+    measure: exercise.measure,
+    rep_min: duration,
+    rep_max: duration,
+    target_rir: 4,
+    rest_sec: 0,
+    superset_group: MINIMUM_DOSE_SUPERSET,
+    is_key: false,
+  });
+}
+
 /**
- * Catalog bodyweight exercises (new ids), at most one per pattern not already covered:
+ * Catalog bodyweight exercises (new ids), at most one per pattern not already in the session:
  * first those whose primary muscles the session already trains, then the rest.
  */
 function bodyweightOptions(
   session: PlannedSession,
   opts: MinimumDoseOptions,
   catalog: readonly Exercise[],
-  kept: readonly PlannedExercise[],
+  sessionExercises: readonly PlannedExercise[],
   sessionMuscles: ReadonlySet<string>,
 ): PlannedExercise[] {
   const lookup = createCatalogLookup(catalog);
-  const covered = new Set(kept.map((pe) => lookup(pe.exercise_id).pattern));
+  const covered = new Set(sessionExercises.map((pe) => lookup(pe.exercise_id).pattern));
+  const usedIds = new Set(session.exercises.map((pe) => pe.exercise_id));
   const ctx = {
     catalog,
     equipment: [],
@@ -244,7 +347,10 @@ function bodyweightOptions(
         continue;
       }
       const exercise = rankCandidates({ pattern }, ctx).find(
-        (candidate) => !candidate.low_stimulus && sameMuscles(candidate) === preferSameMuscles,
+        (candidate) =>
+          !candidate.low_stimulus &&
+          !usedIds.has(candidate.id) &&
+          sameMuscles(candidate) === preferSameMuscles,
       );
       if (exercise) {
         covered.add(pattern);
@@ -270,29 +376,57 @@ function bodyweightOptions(
   });
 }
 
+export interface MergeOptions {
+  newId: IdGenerator;
+  /** The absorbing session may not get longer than this (session_minutes + 10%). */
+  maxMinutes: number;
+  catalog?: readonly Exercise[];
+}
+
 /**
- * Content of a session that absorbs another (merge): the absorbing session's key exercises,
- * then the merged session's key exercises (copied with new ids; exercises already present are
- * not duplicated), then the absorbing session's other exercises while the total stays within
- * its planned duration.
+ * Content of a session that absorbs another (merge, QA bug 3):
+ * 1. the absorbing session's key exercises and the merged session's key exercises (copied with
+ *    new ids; exercise ids already present are not duplicated);
+ * 2. while that is longer than `maxMinutes`: sets of borrowed exercises are trimmed first, then
+ *    the absorbing session's own key sets (never below 1), then borrowed exercises are dropped;
+ * 3. the absorbing session's other exercises are added in plan order while they fit.
+ * Returns the session and how many key exercises were borrowed (0 means the merge adds nothing).
  */
 export function mergeSessionExercises(
   absorbing: PlannedSession,
   merged: PlannedSession,
-  newId: IdGenerator,
-  catalog: readonly Exercise[] = EXERCISE_CATALOG,
-): PlannedSession {
-  const lookup = createCatalogLookup(catalog);
+  opts: MergeOptions,
+): { session: PlannedSession; borrowed: number } {
+  const lookup = createCatalogLookup(opts.catalog ?? EXERCISE_CATALOG);
   const present = new Set(absorbing.exercises.map((pe) => pe.exercise_id));
-  const ownKeys = absorbing.exercises.filter((pe) => pe.is_key);
+  const ownKeys = absorbing.exercises.filter((pe) => pe.is_key).map((pe) => ({ ...pe }));
   const borrowed = merged.exercises
-    .filter((pe) => pe.is_key && !present.has(pe.exercise_id))
-    .map((pe) => ({ ...pe, id: newId() }));
+    .filter((pe) => pe.is_key && !present.has(pe.exercise_id) && !isConditioning(pe, lookup))
+    .map((pe) => ({ ...pe, id: opts.newId(), planned_session_id: absorbing.id }));
+  const fits = (exercises: readonly PlannedExercise[]) =>
+    minutesOf(exercises, absorbing, lookup) <= opts.maxMinutes;
+
+  for (;;) {
+    if (fits([...ownKeys, ...borrowed])) {
+      break;
+    }
+    const trimmable =
+      [...borrowed].reverse().find((pe) => pe.sets > 1) ??
+      [...ownKeys].reverse().find((pe) => pe.sets > 1);
+    if (trimmable) {
+      trimmable.sets -= 1;
+      continue;
+    }
+    if (borrowed.length === 0) {
+      break;
+    }
+    borrowed.pop();
+  }
   const chosen = [...ownKeys, ...borrowed];
   for (const pe of absorbing.exercises.filter((item) => !item.is_key)) {
-    if (minutesOf([...chosen, pe], absorbing, lookup) <= absorbing.est_minutes) {
+    if (fits([...chosen, pe])) {
       chosen.push(pe);
     }
   }
-  return finalize(absorbing, chosen, lookup);
+  return { session: finalize(absorbing, chosen, lookup), borrowed: borrowed.length };
 }
