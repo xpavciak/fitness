@@ -27,15 +27,14 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 | D5 | AI | Limited. The plan explanation and weekly reflection sit behind an interface with a deterministic, template-based fallback. The Claude API is called server-side only and is optional. It is not required for done. | No API key is available. The rules engine stays the source of truth. |
 | D6 | Budget | Free tiers only | Default until the user says otherwise. |
 | D7 | Wearables, chat coach, running module, marketplace | Out of MVP scope (later phases) | Per the research roadmap. |
-
-| D8 | Delegation mechanism for T1–T11 | **Open, needs user decision** | The boss session that received the go-ahead has no Agent tool. Options: (a) rerun as the main thread with `claude --agent boss` so that `Agent(developer, reviewer, qa)` is available; (b) the user allows the boss to start `claude -p --agent <name>` subprocesses via Bash (this needs a non-interactive permission mode, which only the user can grant); (c) the user explicitly waives the role split and C5. |
+| D8 | Delegation mechanism for T1–T11 | The main session acts as orchestrator and delegates to the developer, reviewer and qa agents directly, following the boss agent's plan and order. | Subagents cannot spawn subagents. This keeps the role split and the C5 quality gate without changing any permissions. Tasks are batched: (T1–T3), then (T4–T7 alongside T8), then (T9–T10), then T11. Each batch gets a reviewer pass and a QA pass. |
 
 ## Tasks
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
 | T0 | Translate the research doc to English (`docs/research/fitness-app-options.md`) | done (no agent review) | Translated by the boss agent (documentation, not production code). Reviewer/QA were not run because no agent-delegation tool was available. |
-| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | blocked | Blocker B1: the boss session has no Agent/Task tool, so it can't delegate to the developer/reviewer/qa agents. |
+| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | in progress | B1 resolved by D8. |
 | T2 | Zod schemas for the domain model | todo | |
 | T3 | Exercise catalog (~80–120 exercises) | todo | |
 | T4 | `generatePlan`, templates and the PAR-Q+ gate | todo | Feature A |
@@ -51,3 +50,4 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 
 - 2026-10-08: Research done (boss agent). The user chose English. Decisions D2–D7 follow the boss agent's recommendations.
 - 2026-10-08: T0 done (English research doc). T1–T11 blocked: the boss session has no agent-delegation tool and must not write production code itself. Escalated to the user (D8).
+- 2026-10-08: B1 resolved (D8): the main session orchestrates. Starting batch 1 (T1–T3).
