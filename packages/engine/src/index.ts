@@ -12,3 +12,6 @@ export * from './plan/session-time.js';
 export * from './plan/select.js';
 export * from './plan/rules.js';
 export * from './plan/generate.js';
+// Feature B: progression, e1RM and personal records (T5)
+export * from './progression/next-targets.js';
+export * from './progression/one-rep-max.js';

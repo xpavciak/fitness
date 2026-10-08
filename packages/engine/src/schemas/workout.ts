@@ -19,7 +19,9 @@ export const MAX_LOGGED_RIR = 10;
  * One performed set. `reps` holds reps or seconds depending on `measure`, which must match
  * the catalog exercise (checked by `createCatalogValidators`).
  *
- * Load convention: `load_kg` is per implement (per dumbbell/kettlebell, i.e. per hand);
+ * Conventions:
+ * - `set_index`: warm-up and working sets share one sequence per exercise in a workout.
+ * - Load: `load_kg` is per implement (per dumbbell/kettlebell, i.e. per hand);
  * for a barbell it is the total including the bar; 0 for bodyweight. See `loads.ts`.
  */
 export const SetLogRowSchema = z.object({
@@ -28,6 +30,11 @@ export const SetLogRowSchema = z.object({
   exercise_id: ExerciseIdSchema,
   /** The prescription this set fulfils; absent for substituted or added exercises. */
   planned_exercise_id: IdSchema.optional(),
+  /**
+   * Position of the set within this exercise in this workout. Warm-up and working sets share
+   * ONE sequence per (workout, exercise): e.g. warm-ups 0-1, then working sets 2-4. Engine
+   * code distinguishes them by `is_warmup`, never by index.
+   */
   set_index: z.int().min(0),
   measure: ExerciseMeasureSchema,
   reps: z.int().min(0).max(MAX_SECONDS_PER_SET),
