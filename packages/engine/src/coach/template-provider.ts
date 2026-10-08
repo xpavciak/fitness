@@ -9,11 +9,17 @@ import type { Exercise, Plan, Profile } from '../schemas/index.js';
  * stays the source of truth; these texts only explain it. Implementations never give medical
  * advice and never blame the user.
  */
+export interface CoachText {
+  text: string;
+  /** `ai`: written by the model via the proxy; `template`: the deterministic fallback. */
+  source: 'ai' | 'template';
+}
+
 export interface CoachTextProvider {
   /** Plain-English explanation of a generated plan. */
-  explainPlan(plan: Plan, profile: Profile): Promise<string>;
+  explainPlan(plan: Plan, profile: Profile): Promise<CoachText>;
   /** Plain-English reflection on one week (`weekIndex` is 0-based, as in `stats.weeks`). */
-  weeklyReflection(stats: AdherenceStats, weekIndex: number, profile: Profile): Promise<string>;
+  weeklyReflection(stats: AdherenceStats, weekIndex: number, profile: Profile): Promise<CoachText>;
 }
 
 export const NOT_MEDICAL_ADVICE = 'This is general fitness guidance, not medical advice.';
@@ -52,12 +58,18 @@ export class TemplateCoachProvider implements CoachTextProvider {
   }
 
   // `.then` turns a thrown error (e.g. an unknown week) into a rejected promise.
-  explainPlan(plan: Plan, profile: Profile): Promise<string> {
-    return Promise.resolve().then(() => this.planText(plan, profile));
+  explainPlan(plan: Plan, profile: Profile): Promise<CoachText> {
+    return Promise.resolve().then(() => ({
+      text: this.planText(plan, profile),
+      source: 'template' as const,
+    }));
   }
 
-  weeklyReflection(stats: AdherenceStats, weekIndex: number, profile: Profile): Promise<string> {
-    return Promise.resolve().then(() => this.reflectionText(stats, weekIndex, profile));
+  weeklyReflection(stats: AdherenceStats, weekIndex: number, profile: Profile): Promise<CoachText> {
+    return Promise.resolve().then(() => ({
+      text: this.reflectionText(stats, weekIndex, profile),
+      source: 'template' as const,
+    }));
   }
 
   /** Synchronous version of `explainPlan` (deterministic). */
@@ -110,8 +122,9 @@ export class TemplateCoachProvider implements CoachTextProvider {
         `So far in ${label}: ${week.completed} of ${plural(week.planned, 'session')} done, ${week.upcoming} still to go.`,
       );
       if (week.missed > 0) {
+        const slipped = week.missed === 1 ? 'One session' : `${week.missed} sessions`;
         parts.push(
-          'One session slipped, and that is fine. If time is short, a 10-15 minute minimum dose still counts. The trick is to not miss twice in a row.',
+          `${slipped} slipped, and that is fine. If time is short, a 10-15 minute minimum dose still counts. The trick is to get the next one in.`,
         );
       }
     } else if (week.completed >= week.planned) {

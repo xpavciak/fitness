@@ -23,4 +23,5 @@ export * from './schedule/apply.js';
 export * from './adherence/adherence.js';
 // D5: coach texts (plan explanation, weekly reflection) with a template fallback (T10)
 export * from './coach/template-provider.js';
+export * from './coach/proxy-contract.js';
 export * from './coach/claude-provider.js';
