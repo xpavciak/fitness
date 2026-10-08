@@ -50,6 +50,8 @@ export function useTwoStepConfirm<K extends string>() {
  */
 export function useTapGuard(focusKey: number) {
   const last = useRef(new Map<string, number>());
+  // Never updated: the focus clock only increases, so any value other than the mount-time one
+  // means the screen regained focus after mounting.
   const mountKey = useRef(focusKey);
   const settledFrom = useRef<number | null>(null);
   useEffect(() => {

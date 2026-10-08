@@ -82,6 +82,8 @@ export interface DataExport extends AppData {
   exported_at: string;
   /** Unfinished workouts (the user's inputs), one per session. */
   workoutDrafts: SavedWorkoutDraft[];
+  /** Keys of drafts that could not be read (corrupt); left out so the export still works. */
+  invalidDrafts: string[];
 }
 
 /**
@@ -285,10 +287,19 @@ export class LocalRepository implements Repository {
     return this.queue.run(async () => {
       const data = await this.loadUnlocked();
       const workoutDrafts: SavedWorkoutDraft[] = [];
+      const invalidDrafts: string[] = [];
       for (const key of await this.draftKeys()) {
-        const draft = await this.readDraft(key);
-        if (draft) {
-          workoutDrafts.push(draft);
+        try {
+          const draft = await this.readDraft(key);
+          if (draft) {
+            workoutDrafts.push(draft);
+          }
+        } catch (error) {
+          // One corrupt draft must not block exporting everything else; report it instead.
+          if (!(error instanceof StoredDataError)) {
+            throw error;
+          }
+          invalidDrafts.push(key);
         }
       }
       return {
@@ -297,6 +308,7 @@ export class LocalRepository implements Repository {
         exported_at: exportedAt,
         ...data,
         workoutDrafts,
+        invalidDrafts,
       };
     });
   }

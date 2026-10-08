@@ -275,6 +275,17 @@ describe('LocalRepository: drafts in the export and pruning', () => {
     await repo.saveWorkoutDraft(draft(session.id));
     const exported = await repo.exportData('2026-10-08T12:00:00.000Z');
     expect(exported.workoutDrafts).toEqual([draft(session.id)]);
+    expect(exported.invalidDrafts).toEqual([]);
+  });
+
+  it('exports the valid drafts and lists a corrupt one instead of failing', async () => {
+    const corruptKey = `${WORKOUT_DRAFT_PREFIX}${must(plan.weeks[0]?.sessions[1]).id}`;
+    await repo.saveWorkoutDraft(draft(session.id));
+    await store.setItem(corruptKey, '{not json');
+    const exported = await repo.exportData('2026-10-08T12:00:00.000Z');
+    expect(exported.workoutDrafts).toEqual([draft(session.id)]);
+    expect(exported.invalidDrafts).toEqual([corruptKey]);
+    expect(exported.profile).toBeNull();
   });
 
   it('prunes drafts outside the kept sessions', async () => {
