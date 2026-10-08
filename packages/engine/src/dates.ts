@@ -59,3 +59,42 @@ export function isValidTimeZone(timeZone: string): boolean {
     throw error;
   }
 }
+
+/** Monday of the week containing `date`. */
+export function startOfWeek(date: string): string {
+  return addDays(date, -weekdayIndex(date));
+}
+
+/** The Monday on or after `date`. */
+export function nextMondayOnOrAfter(date: string): string {
+  const offset = weekdayIndex(date);
+  return offset === 0 ? date : addDays(date, 7 - offset);
+}
+
+/**
+ * Local calendar date (`YYYY-MM-DD`) of an ISO 8601 instant in an IANA time zone,
+ * e.g. `2026-10-04T23:30:00Z` in `Europe/Bratislava` -> `2026-10-05`.
+ */
+export function localDateOf(instant: string, timeZone: string): string {
+  const epochMs = Date.parse(instant);
+  if (Number.isNaN(epochMs)) {
+    throw new RangeError(`Invalid ISO 8601 instant "${instant}"`);
+  }
+  if (!isValidTimeZone(timeZone)) {
+    throw new RangeError(`Unknown IANA time zone "${timeZone}"`);
+  }
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(epochMs));
+  const part = (type: 'year' | 'month' | 'day'): string => {
+    const value = parts.find((p) => p.type === type)?.value;
+    if (value === undefined) {
+      throw new RangeError(`Could not format ${instant} in ${timeZone}`);
+    }
+    return value;
+  };
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}

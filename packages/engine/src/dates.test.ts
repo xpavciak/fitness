@@ -5,6 +5,9 @@ import {
   isMonday,
   isValidTimeZone,
   isWithinWeek,
+  localDateOf,
+  nextMondayOnOrAfter,
+  startOfWeek,
   toEpochDay,
   weekdayIndex,
 } from './dates.js';
@@ -38,5 +41,22 @@ describe('date helpers', () => {
     expect(isValidTimeZone('UTC')).toBe(true);
     expect(isValidTimeZone('Mars/Olympus_Mons')).toBe(false);
     expect(isValidTimeZone('')).toBe(false);
+  });
+
+  it('finds the Monday of a week and the next Monday', () => {
+    expect(startOfWeek('2026-10-11')).toBe('2026-10-05'); // Sunday
+    expect(startOfWeek('2026-10-05')).toBe('2026-10-05');
+    expect(nextMondayOnOrAfter('2026-10-08')).toBe('2026-10-12');
+    expect(nextMondayOnOrAfter('2026-10-12')).toBe('2026-10-12');
+    expect(startOfWeek('2027-01-01')).toBe('2026-12-28'); // across a year boundary
+  });
+
+  it('converts instants to local dates in an IANA time zone', () => {
+    expect(localDateOf('2026-10-04T23:30:00Z', 'Europe/Bratislava')).toBe('2026-10-05');
+    expect(localDateOf('2026-10-04T23:30:00Z', 'UTC')).toBe('2026-10-04');
+    expect(localDateOf('2026-10-05T03:00:00Z', 'America/Los_Angeles')).toBe('2026-10-04');
+    expect(localDateOf('2026-10-05T01:00:00+02:00', 'UTC')).toBe('2026-10-04');
+    expect(() => localDateOf('nope', 'UTC')).toThrow(RangeError);
+    expect(() => localDateOf('2026-10-05T01:00:00Z', 'Mars/Olympus')).toThrow(RangeError);
   });
 });
