@@ -10,6 +10,8 @@ import {
   parseLoad,
   parseWholeNumber,
   restRemaining,
+  stepRir,
+  summarizeLog,
   toggleSetCompleted,
   updateSet,
   workoutLogFromDraft,
@@ -187,5 +189,34 @@ describe('number inputs and the rest timer', () => {
     expect(restRemaining(90, 0, 120_000)).toBe(0);
     expect(formatSeconds(75)).toBe('1:15');
     expect(formatSeconds(5)).toBe('0:05');
+  });
+});
+
+describe('stepRir', () => {
+  it('stays at 0 on minus and caps at the maximum', () => {
+    expect(stepRir(0, -1)).toBe(0);
+    expect(stepRir(2, -1)).toBe(1);
+    expect(stepRir(5, 1)).toBe(5);
+    expect(stepRir(undefined, 1)).toBe(0);
+    expect(stepRir(undefined, -1)).toBeUndefined();
+  });
+});
+
+describe('summarizeLog (read-only view of a done session)', () => {
+  it('groups sets by exercise with reps, load and RIR', () => {
+    const done = completeAll(draftFor(), at(must(first).scheduled_date, '10:30:00'), '12');
+    const log = workoutLogFromDraft(done, {
+      userId,
+      endedAt: at(must(first).scheduled_date, '11:00:00'),
+    });
+    const summary = summarizeLog(log);
+    expect(summary.map((entry) => entry.exerciseId)).toEqual(
+      done.exercises.map((exercise) => exercise.planned.exercise_id),
+    );
+    const firstExercise = must(done.exercises[0]);
+    expect(summary[0]?.sets).toHaveLength(firstExercise.sets.length);
+    expect(summary[0]?.sets[0]).toBe(
+      `${firstExercise.sets[0]?.reps} reps${firstExercise.loadable ? ' × 12 kg' : ''} · RIR ${firstExercise.targets.target_rir}`,
+    );
   });
 });

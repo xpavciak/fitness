@@ -11,6 +11,7 @@ import {
   type WorkoutLog,
 } from '@fitness/engine';
 import type { z } from 'zod';
+import { SerialQueue } from '../lib/serial-queue';
 import type { KeyValueStore } from './key-value-store';
 
 /** Everything the app stores on the device. */
@@ -51,12 +52,20 @@ export interface Repository {
   saveProfile(profile: Profile): Promise<void>;
   saveGoal(goal: Goal): Promise<void>;
   savePlan(plan: Plan): Promise<void>;
+  /** Removes the active plan (e.g. when screening blocks after the answers were edited). */
+  removePlan(): Promise<void>;
+  /**
+   * Saves the result of onboarding. Everything is validated before anything is written, and the
+   * plan is written (or removed) first, so a failure part-way never leaves a usable plan that
+   * contradicts the saved profile.
+   */
+  saveSetup(setup: { profile: Profile; goal: Goal; plan: Plan | null }): Promise<void>;
   /** Inserts or replaces (by `id`) a workout log. */
   saveWorkoutLog(log: WorkoutLog): Promise<void>;
   /** Appends schedule changes (replacing any with the same `id`). */
   addScheduleChanges(changes: readonly ScheduleChange[]): Promise<void>;
   exportData(exportedAt: string): Promise<DataExport>;
-  /** Deletes every key this app stores on the device. */
+  /** Deletes every key this app stores on the device; throws `ClearDataError` listing failures. */
   clearAll(): Promise<void>;
 }
 
@@ -68,6 +77,14 @@ export class StoredDataError extends Error {
   ) {
     super(`Stored data for "${key}" is invalid: ${message}`);
     this.name = 'StoredDataError';
+  }
+}
+
+/** Thrown when some keys could not be deleted; the others were deleted. */
+export class ClearDataError extends Error {
+  constructor(readonly failedKeys: readonly string[]) {
+    super(`Could not delete: ${failedKeys.join(', ')}. Please try again.`);
+    this.name = 'ClearDataError';
   }
 }
 
@@ -89,7 +106,10 @@ const schemas = {
   scheduleChanges: ScheduleChangeSchema.array(),
 } satisfies Record<keyof typeof STORAGE_KEYS, z.ZodType>;
 
-function upsertById<T extends { id: string }>(items: readonly T[], added: readonly T[]): T[] {
+export function upsertById<T extends { id: string }>(
+  items: readonly T[],
+  added: readonly T[],
+): T[] {
   const result = [...items];
   for (const item of added) {
     const index = result.findIndex((existing) => existing.id === item.id);
@@ -103,9 +123,83 @@ function upsertById<T extends { id: string }>(items: readonly T[], added: readon
 }
 
 export class LocalRepository implements Repository {
+  /** Serializes all operations, so read-modify-write updates never interleave. */
+  private readonly queue = new SerialQueue();
+
   constructor(private readonly store: KeyValueStore) {}
 
-  async load(): Promise<AppData> {
+  load(): Promise<AppData> {
+    return this.queue.run(() => this.loadUnlocked());
+  }
+
+  saveProfile(profile: Profile): Promise<void> {
+    return this.queue.run(() => this.write('profile', profile));
+  }
+
+  saveGoal(goal: Goal): Promise<void> {
+    return this.queue.run(() => this.write('goal', goal));
+  }
+
+  savePlan(plan: Plan): Promise<void> {
+    return this.queue.run(() => this.write('plan', plan));
+  }
+
+  removePlan(): Promise<void> {
+    return this.queue.run(() => this.store.removeItem(STORAGE_KEYS.plan));
+  }
+
+  saveSetup(setup: { profile: Profile; goal: Goal; plan: Plan | null }): Promise<void> {
+    return this.queue.run(async () => {
+      // Validate everything up front: nothing is written when any part is invalid.
+      const profile = schemas.profile.parse(setup.profile);
+      const goal = schemas.goal.parse(setup.goal);
+      const plan = setup.plan === null ? null : schemas.plan.parse(setup.plan);
+      if (goal.user_id !== profile.user_id || (plan !== null && plan.user_id !== profile.user_id)) {
+        throw new Error('Profile, goal and plan must belong to the same user');
+      }
+      if (plan === null) {
+        await this.store.removeItem(STORAGE_KEYS.plan);
+      } else {
+        await this.store.setItem(STORAGE_KEYS.plan, JSON.stringify(plan));
+      }
+      await this.store.setItem(STORAGE_KEYS.goal, JSON.stringify(goal));
+      await this.store.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
+    });
+  }
+
+  saveWorkoutLog(log: WorkoutLog): Promise<void> {
+    return this.queue.run(async () => {
+      const logs = (await this.read('workoutLogs')) ?? [];
+      await this.write('workoutLogs', upsertById(logs, [log]));
+    });
+  }
+
+  addScheduleChanges(changes: readonly ScheduleChange[]): Promise<void> {
+    return this.queue.run(async () => {
+      const existing = (await this.read('scheduleChanges')) ?? [];
+      await this.write('scheduleChanges', upsertById(existing, changes));
+    });
+  }
+
+  exportData(exportedAt: string): Promise<DataExport> {
+    return this.queue.run(async () => {
+      const data = await this.loadUnlocked();
+      return { format: EXPORT_FORMAT, version: EXPORT_VERSION, exported_at: exportedAt, ...data };
+    });
+  }
+
+  clearAll(): Promise<void> {
+    return this.queue.run(async () => {
+      const keys = Object.values(STORAGE_KEYS);
+      const results = await Promise.allSettled(keys.map((key) => this.store.removeItem(key)));
+      const failed = keys.filter((_, index) => results[index]?.status === 'rejected');
+      if (failed.length > 0) {
+        throw new ClearDataError(failed);
+      }
+    });
+  }
+
+  private async loadUnlocked(): Promise<AppData> {
     const [profile, goal, plan, workoutLogs, scheduleChanges] = await Promise.all([
       this.read('profile'),
       this.read('goal'),
@@ -120,37 +214,6 @@ export class LocalRepository implements Repository {
       workoutLogs: workoutLogs ?? [],
       scheduleChanges: scheduleChanges ?? [],
     };
-  }
-
-  saveProfile(profile: Profile): Promise<void> {
-    return this.write('profile', profile);
-  }
-
-  saveGoal(goal: Goal): Promise<void> {
-    return this.write('goal', goal);
-  }
-
-  savePlan(plan: Plan): Promise<void> {
-    return this.write('plan', plan);
-  }
-
-  async saveWorkoutLog(log: WorkoutLog): Promise<void> {
-    const logs = (await this.read('workoutLogs')) ?? [];
-    await this.write('workoutLogs', upsertById(logs, [log]));
-  }
-
-  async addScheduleChanges(changes: readonly ScheduleChange[]): Promise<void> {
-    const existing = (await this.read('scheduleChanges')) ?? [];
-    await this.write('scheduleChanges', upsertById(existing, changes));
-  }
-
-  async exportData(exportedAt: string): Promise<DataExport> {
-    const data = await this.load();
-    return { format: EXPORT_FORMAT, version: EXPORT_VERSION, exported_at: exportedAt, ...data };
-  }
-
-  async clearAll(): Promise<void> {
-    await Promise.all(Object.values(STORAGE_KEYS).map((key) => this.store.removeItem(key)));
   }
 
   private async read<K extends keyof typeof schemas>(

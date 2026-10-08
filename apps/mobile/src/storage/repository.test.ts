@@ -126,3 +126,37 @@ describe('LocalRepository', () => {
     await expect(repo.load()).resolves.toEqual(EMPTY_APP_DATA);
   });
 });
+
+describe('LocalRepository: atomic setup and concurrency', () => {
+  it('serializes overlapping read-modify-write updates', async () => {
+    const logs = [log(5), log(6), log(7)];
+    await Promise.all(logs.map((entry) => repo.saveWorkoutLog(entry)));
+    expect((await repo.load()).workoutLogs).toEqual(logs);
+  });
+
+  it('writes nothing when any part of the setup is invalid', async () => {
+    await expect(
+      repo.saveSetup({
+        profile: outcome.profile,
+        goal: outcome.goal,
+        plan: { ...plan, weeks: [] },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      repo.saveSetup({
+        profile: outcome.profile,
+        goal: { ...outcome.goal, user_id: '00000009-0000-4000-8000-000000000009' },
+        plan,
+      }),
+    ).rejects.toThrow(/same user/);
+    expect(store.keys()).toEqual([]);
+  });
+
+  it('removes the plan when the setup has none', async () => {
+    await repo.saveSetup({ profile: outcome.profile, goal: outcome.goal, plan });
+    await repo.saveSetup({ profile: outcome.profile, goal: outcome.goal, plan: null });
+    const loaded = await repo.load();
+    expect(loaded.plan).toBeNull();
+    expect(loaded.profile).toEqual(outcome.profile);
+  });
+});

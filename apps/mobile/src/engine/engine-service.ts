@@ -7,11 +7,13 @@
 import {
   adherenceStats,
   applyScheduleChanges,
+  estimate1RM,
   generatePlan,
   nextTargets,
   personalRecords,
   proposeReschedules,
   replacePlannedSession,
+  screenProfile,
   weeklyStreak,
   type AdherenceStats,
   type GeneratePlanResult,
@@ -27,6 +29,7 @@ import {
   type RescheduleEvent,
   type ScheduleChange,
   type ScheduleProposal,
+  type ScreeningResult,
   type SetLog,
   type WeeklyStreak,
   type WorkoutLog,
@@ -112,4 +115,14 @@ export function adherence(input: {
 
 export function records(sets: readonly SetLog[]): Record<string, PersonalRecord> {
   return personalRecords(sets);
+}
+
+/** Estimated one-rep max in kg (Epley); undefined without load or above 10 reps. */
+export function e1rm(loadKg: number, reps: number): number | undefined {
+  return estimate1RM(loadKg, reps);
+}
+
+/** PAR-Q+ and age gate for a saved profile (the same check `generatePlan` runs first). */
+export function screen(profile: Profile, today: string): ScreeningResult {
+  return screenProfile(profile, today);
 }

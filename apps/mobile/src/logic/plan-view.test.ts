@@ -8,6 +8,7 @@ import {
   loggedSessionIds,
   neighborSessions,
   sessionDisplayStatus,
+  sessionLog,
   sessionsByDate,
   todaysSession,
 } from './plan-view';
@@ -96,5 +97,17 @@ describe('plan lookups', () => {
     const second = must(plan.weeks[1]);
     const neighbours = neighborSessions(plan, second).map((s) => s.plan_week_id);
     expect(new Set(neighbours)).toEqual(new Set([firstWeek.id, must(plan.weeks[2]).id]));
+  });
+});
+
+describe('sessionLog', () => {
+  it('finds the latest log linked to a session', () => {
+    const older = logFor(must(s1).id, '2026-10-12');
+    const newer = {
+      ...logFor(must(s1).id, '2026-10-13'),
+      id: '00000099-0000-4000-8000-0000000000ff',
+    };
+    expect(sessionLog([older, newer], must(s1).id)).toBe(newer);
+    expect(sessionLog([older], must(s2).id)).toBeNull();
   });
 });

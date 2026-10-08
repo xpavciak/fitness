@@ -12,6 +12,7 @@ import {
   type WorkoutLog,
 } from '@fitness/engine';
 import { targetsFor } from '../engine/engine-service';
+import { exerciseName } from './labels';
 
 /** One set row in the logging UI. Inputs are strings so the user can type freely. */
 export interface SetDraft {
@@ -277,4 +278,37 @@ export function formatSeconds(totalSec: number): string {
   const minutes = Math.floor(totalSec / 60);
   const seconds = totalSec % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** RIR stepper: "-" stops at 0 and "+" at `MAX_RIR_INPUT`; an empty RIR starts at 0. */
+export function stepRir(rir: number | undefined, delta: 1 | -1): number | undefined {
+  if (rir === undefined) {
+    return delta === 1 ? 0 : undefined;
+  }
+  return Math.min(MAX_RIR_INPUT, Math.max(0, rir + delta));
+}
+
+export interface LoggedExercise {
+  exerciseId: string;
+  name: string;
+  /** One line per set, e.g. "8 reps × 16 kg · RIR 2". */
+  sets: string[];
+}
+
+/** Read-only summary of a saved workout, grouped by exercise in the logged order. */
+export function summarizeLog(log: WorkoutLog): LoggedExercise[] {
+  const groups = new Map<string, LoggedExercise>();
+  for (const set of log.sets) {
+    const group = groups.get(set.exercise_id) ?? {
+      exerciseId: set.exercise_id,
+      name: exerciseName(set.exercise_id),
+      sets: [],
+    };
+    const amount = set.measure === 'seconds' ? `${set.reps} s` : `${set.reps} reps`;
+    const load = set.load_kg > 0 ? ` × ${set.load_kg} kg` : '';
+    const rir = set.rir === undefined ? '' : ` · RIR ${set.rir}`;
+    group.sets.push(`${amount}${load}${rir}${set.completed ? '' : ' (not completed)'}`);
+    groups.set(set.exercise_id, group);
+  }
+  return [...groups.values()];
 }

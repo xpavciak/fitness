@@ -120,3 +120,10 @@ export function sessionsByDate(week: PlanWeek): PlannedSession[] {
     (a, b) => daysBetween(b.scheduled_date, a.scheduled_date) || a.day_index - b.day_index,
   );
 }
+
+/** The workout log linked to a session (the latest one, if several were synced), or null. */
+export function sessionLog(logs: readonly WorkoutLog[], sessionId: string): WorkoutLog | null {
+  const linked = logs.filter((log) => log.planned_session_id === sessionId);
+  linked.sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+  return linked[0] ?? null;
+}

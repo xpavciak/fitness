@@ -1,5 +1,4 @@
 import {
-  estimate1RM,
   localDateOf,
   type AdherenceStats,
   type ExerciseMeasure,
@@ -8,7 +7,7 @@ import {
   type WeeklyStreak,
   type WorkoutLog,
 } from '@fitness/engine';
-import { adherence, records as personalRecords } from '../engine/engine-service';
+import { adherence, e1rm, records as personalRecords } from '../engine/engine-service';
 import { exerciseName } from './labels';
 
 export interface AdherenceSummary {
@@ -76,12 +75,12 @@ export function exerciseProgress(
       if (!set.completed || set.is_warmup || set.measure !== 'reps' || set.reps < 1) {
         continue;
       }
-      const e1rm = estimate1RM(set.load_kg, set.reps);
-      if (e1rm === undefined) {
+      const estimate = e1rm(set.load_kg, set.reps);
+      if (estimate === undefined) {
         continue;
       }
       const perLog = history.get(set.exercise_id) ?? new Map<string, number>();
-      perLog.set(log.id, Math.max(perLog.get(log.id) ?? 0, e1rm));
+      perLog.set(log.id, Math.max(perLog.get(log.id) ?? 0, estimate));
       history.set(set.exercise_id, perLog);
       logDates.set(log.id, date);
     }

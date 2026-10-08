@@ -1,22 +1,21 @@
-import { Platform, Share } from 'react-native';
+import { File, Paths } from 'expo-file-system';
+import { isAvailableAsync, shareAsync } from 'expo-sharing';
 
 /**
- * Hands a JSON document to the user: a file download on web, the system share sheet on
- * iOS/Android. Returns a short description of what happened.
+ * iOS/Android: writes the JSON document to a cache file and opens the system share sheet with
+ * that file (so it can be saved to Files, mailed, etc.). The web build uses `share-json.web.ts`.
  */
 export async function shareJson(fileName: string, json: string): Promise<string> {
-  if (Platform.OS === 'web') {
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    return `Downloaded ${fileName}.`;
+  if (!(await isAvailableAsync())) {
+    throw new Error('Sharing is not available on this device.');
   }
-  const result = await Share.share({ title: fileName, message: json });
-  return result.action === Share.dismissedAction ? 'Export cancelled.' : 'Export shared.';
+  const file = new File(Paths.cache, fileName);
+  file.create({ overwrite: true });
+  file.write(json);
+  await shareAsync(file.uri, {
+    mimeType: 'application/json',
+    UTI: 'public.json',
+    dialogTitle: fileName,
+  });
+  return `Shared ${fileName}.`;
 }
