@@ -100,7 +100,7 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
       disabled={disabled}
       onPress={onPress}
       testID={testID}
@@ -117,21 +117,31 @@ export function Button({
   );
 }
 
+/** Minimum touch target (iOS HIG 44 pt; Android recommends 48 dp). */
+export const MIN_TOUCH = 44;
+
 export function Chip({
   label,
   selected,
   onPress,
   testID,
+  role = 'checkbox',
+  accessibilityLabel,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
   testID?: string;
+  /** `radio` for one-of-many choices (e.g. Yes/No), `checkbox` for toggles. */
+  role?: 'checkbox' | 'radio';
+  /** Spoken label when the visible text alone is ambiguous (e.g. "<question>: No"). */
+  accessibilityLabel?: string;
 }) {
   return (
     <Pressable
-      accessibilityRole="checkbox"
-      accessibilityState={{ checked: selected }}
+      accessibilityRole={role}
+      aria-checked={selected}
+      accessibilityLabel={accessibilityLabel ?? label}
       onPress={onPress}
       testID={testID}
       style={[styles.chip, selected && styles.chipSelected]}
@@ -141,8 +151,21 @@ export function Chip({
   );
 }
 
-export function ChipRow({ children }: { children: ReactNode }) {
-  return <View style={styles.chipRow}>{children}</View>;
+export function ChipRow({
+  children,
+  radioGroup,
+}: {
+  children: ReactNode;
+  /** Accessible name of a radio group; omit for a plain row of toggles. */
+  radioGroup?: string;
+}) {
+  return radioGroup === undefined ? (
+    <View style={styles.chipRow}>{children}</View>
+  ) : (
+    <View style={styles.chipRow} accessibilityRole="radiogroup" accessibilityLabel={radioGroup}>
+      {children}
+    </View>
+  );
 }
 
 export function Checkbox({
@@ -159,7 +182,7 @@ export function Checkbox({
   return (
     <Pressable
       accessibilityRole="checkbox"
-      accessibilityState={{ checked }}
+      aria-checked={checked}
       onPress={() => {
         onChange(!checked);
       }}
@@ -213,12 +236,14 @@ export function Field({
 export function Badge({
   label,
   tone,
+  testID,
 }: {
   label: string;
   tone: 'neutral' | 'good' | 'bad' | 'info';
+  testID?: string;
 }) {
   return (
-    <View style={[styles.badge, styles[`badge_${tone}`]]}>
+    <View style={[styles.badge, styles[`badge_${tone}`]]} testID={testID}>
       <Text style={styles.badgeText}>{label}</Text>
     </View>
   );
@@ -259,6 +284,8 @@ const styles = StyleSheet.create({
   muted: { color: colors.muted },
   error: { color: colors.danger, fontSize: 14 },
   button: {
+    minHeight: MIN_TOUCH,
+    justifyContent: 'center',
     borderRadius: 10,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
@@ -274,7 +301,11 @@ const styles = StyleSheet.create({
   buttonText_danger: { color: colors.danger },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
-    borderRadius: 16,
+    minHeight: MIN_TOUCH,
+    minWidth: MIN_TOUCH,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: colors.border,
     paddingVertical: spacing.xs + 2,
@@ -284,7 +315,12 @@ const styles = StyleSheet.create({
   chipSelected: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { color: colors.text, fontSize: 14 },
   chipTextSelected: { color: colors.primaryText },
-  checkboxRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm },
+  checkboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: MIN_TOUCH,
+  },
   checkbox: {
     width: 22,
     height: 22,
@@ -301,6 +337,7 @@ const styles = StyleSheet.create({
   fieldCompact: { flex: 1, minWidth: 64 },
   label: { color: colors.muted, fontSize: 13 },
   input: {
+    minHeight: MIN_TOUCH,
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: 8,

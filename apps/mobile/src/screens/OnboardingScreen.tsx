@@ -169,6 +169,7 @@ export function OnboardingScreen({
               <Chip
                 key={level}
                 label={EXPERIENCE_LABELS[level]}
+                role="radio"
                 selected={draft.experience === level}
                 onPress={() => {
                   patch({ experience: level });
@@ -218,6 +219,8 @@ export function OnboardingScreen({
               <Chip
                 key={days}
                 label={String(days)}
+                role="radio"
+                accessibilityLabel={`${days} sessions per week`}
                 selected={draft.daysPerWeek === days}
                 onPress={() => {
                   patch({ daysPerWeek: days });
@@ -232,6 +235,7 @@ export function OnboardingScreen({
               <Chip
                 key={minutes}
                 label={`${minutes} min`}
+                role="radio"
                 selected={draft.sessionMinutes === minutes}
                 onPress={() => {
                   patch({ sessionMinutes: minutes });
@@ -302,9 +306,11 @@ export function OnboardingScreen({
           {PARQ_KEYS.map((key) => (
             <Card key={key} testID={`parq-${key}`}>
               <Body>{PARQ_QUESTIONS[key]}</Body>
-              <ChipRow>
+              <ChipRow radioGroup={PARQ_QUESTIONS[key]}>
                 <Chip
                   label="No"
+                  role="radio"
+                  accessibilityLabel={`${PARQ_QUESTIONS[key]} No`}
                   selected={draft.parq[key] === false}
                   onPress={() => {
                     patch({ parq: { ...draft.parq, [key]: false } });
@@ -313,6 +319,8 @@ export function OnboardingScreen({
                 />
                 <Chip
                   label="Yes"
+                  role="radio"
+                  accessibilityLabel={`${PARQ_QUESTIONS[key]} Yes`}
                   selected={draft.parq[key] === true}
                   onPress={() => {
                     patch({ parq: { ...draft.parq, [key]: true } });
@@ -333,6 +341,7 @@ export function OnboardingScreen({
               <Chip
                 key={type}
                 label={GOAL_LABELS[type]}
+                role="radio"
                 selected={draft.goalType === type}
                 onPress={() => {
                   patch({ goalType: type });

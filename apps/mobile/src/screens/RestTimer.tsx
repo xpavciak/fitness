@@ -9,26 +9,43 @@ export interface RestTimerState {
   startedAtMs: number;
 }
 
-/** Counts down from the planned rest; computed from the start time so it survives re-renders. */
+const TICK_MS = 250;
+
+/**
+ * Counts down from the planned rest. The time left is computed from the start instant, so it
+ * stays correct across re-renders and slow ticks. The interval stops when the rest is over, and
+ * only that transition is announced to screen readers (the countdown itself is not).
+ */
 export function RestTimer({ timer, onDismiss }: { timer: RestTimerState; onDismiss: () => void }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [nowMs, setNowMs] = useState(timer.startedAtMs);
   useEffect(() => {
     const interval = setInterval(() => {
-      setNowMs(Date.now());
-    }, 250);
+      const current = Date.now();
+      setNowMs(current);
+      if (restRemaining(timer.durationSec, timer.startedAtMs, current) === 0) {
+        clearInterval(interval);
+      }
+    }, TICK_MS);
     return () => {
       clearInterval(interval);
     };
   }, [timer]);
   const remaining = restRemaining(timer.durationSec, timer.startedAtMs, nowMs);
+  const over = remaining === 0;
   return (
-    <View style={styles.timer} testID="rest-timer" accessibilityLiveRegion="polite">
-      <Text style={styles.label}>{remaining > 0 ? 'Rest' : 'Rest over: next set'}</Text>
+    <View style={styles.timer} testID="rest-timer">
+      {over ? (
+        <Text style={styles.label} aria-live="assertive" testID="rest-over">
+          Rest over: next set
+        </Text>
+      ) : (
+        <Text style={styles.label}>Rest</Text>
+      )}
       <Text style={styles.time} testID="rest-timer-remaining">
         {formatSeconds(remaining)}
       </Text>
       <Button
-        label={remaining > 0 ? 'Skip rest' : 'Dismiss'}
+        label={over ? 'Dismiss' : 'Skip rest'}
         variant="secondary"
         onPress={onDismiss}
         testID="rest-timer-dismiss"

@@ -44,8 +44,17 @@ folder. The script never downloads browsers itself; CI installs Chromium first. 
   Invalid stored data raises `StoredDataError`, and the app shows a "could not be read" screen
   that offers to retry or delete. It never discards data silently.
 - `src/sync/`: the `SyncAdapter` interface and `NoopSyncAdapter` (the default). See below.
-- `src/state/`: the React store (context) that ties together the repository, the clock, ids
-  (`expo-crypto` `randomUUID`) and the device time zone (`expo-localization`).
+- `src/state/`: `AppController` (framework-free, unit-tested) holds the loaded data and runs every
+  action through one promise-chain mutex (`src/lib/serial-queue.ts`). Each action reads the
+  latest data when it starts and publishes the result when it finishes; after a failure it
+  re-reads the repository. It exposes `busy`, and screens disable their action buttons while
+  it is set. `store.tsx` binds the controller to React with `useSyncExternalStore`. It also
+  bumps a clock, so "today" is recomputed when the app returns to the foreground (`AppState`)
+  and when a tab gains focus. IDs come from `expo-crypto` `randomUUID`; on insecure web origins
+  they fall back to `getRandomValues`. The device time zone comes from `expo-localization`.
+- **Time zone.** The profile's IANA `timezone` is captured from the device at onboarding and
+  then **frozen**: "today", missed sessions and adherence weeks are all computed in that zone,
+  even after travel. Editing the answers keeps it.
 
 ## Data model on the device
 
@@ -57,13 +66,23 @@ AsyncStorage keys (`fitness/v1/...`):
 - `workout_logs`
 - `schedule_changes`: an append-only audit trail of accepted rescheduling proposals.
 
-Regenerating the plan replaces `plan` and keeps the logs and the changes. Settings → "Export my
+Onboarding saves through `saveSetup`, which validates the profile, goal and plan first and then
+writes the plan (or removes it) before the goal and profile. Regenerating the plan replaces
+`plan` and keeps the logs and the changes. Settings → "Export my
 data" writes all keys as one JSON document (`format: "fitness-app-export"`, `version: 1`). On web
-the document is downloaded; on native it opens the share sheet. "Delete all local data" removes
-every key.
+the document is downloaded (`share-json.web.ts`). On native it is written to a cache file with
+`expo-file-system` and shared as a file with `expo-sharing` (`share-json.ts`). "Delete all local data" removes
+every key and reports any key it could not delete (`ClearDataError`).
 
 When onboarding hits a PAR-Q+ red flag, or the user may be under 18, the app shows the engine's
-"consult a doctor" message and stores **nothing**.
+"consult a doctor" message:
+
+- **First onboarding:** nothing is stored.
+- **Edited answers (a profile exists):** the updated, consented profile is saved and the plan
+  is **removed**. The Plan tab then shows the doctor message, and Workout has nothing to open.
+  Regenerate re-screens the profile, so the plan cannot come back until the answers pass.
+
+A session that is already done opens read-only with its log, so it is never logged twice.
 
 ## Supabase sync (not wired)
 

@@ -5,11 +5,12 @@
  * rescheduling, the minimum dose, export and delete.
  *
  * Browsers: uses PLAYWRIGHT_BROWSERS_PATH (defaults to /opt/pw-browsers when it exists);
- * this script never downloads browsers. Set E2E_SCREENSHOTS=<dir> to save screenshots.
+ * this script never downloads browsers. Set E2E_SCREENSHOTS=<dir> to save screenshots (a
+ * `failure.png` is always taken there when a check fails; CI uploads it as an artifact).
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Page } from 'playwright-core';
 
@@ -35,7 +36,8 @@ function serve(root: string): Promise<{ server: Server; url: string }> {
   const server = createServer((req, res) => {
     const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname);
     const candidate = normalize(join(root, pathname));
-    const inside = candidate.startsWith(root);
+    // Only serve files inside the build folder (`root + sep`, so `/dist-other` cannot match).
+    const inside = candidate.startsWith(root + sep);
     const file =
       inside && existsSync(candidate) && statSync(candidate).isFile()
         ? candidate
@@ -61,6 +63,7 @@ function step(name: string): void {
 const SCREENSHOTS = process.env.E2E_SCREENSHOTS;
 async function snap(page: Page, name: string): Promise<void> {
   if (SCREENSHOTS !== undefined && SCREENSHOTS !== '') {
+    mkdirSync(SCREENSHOTS, { recursive: true });
     await page.screenshot({ path: join(SCREENSHOTS, `${name}.png`), fullPage: true });
   }
 }
@@ -111,10 +114,12 @@ async function main(): Promise<void> {
   const { server, url } = await serve(DIST);
   const browser = await chromium.launch();
   const pageErrors: string[] = [];
+  let current: Page | undefined;
   try {
     // --- PAR-Q+ red flag: the doctor message replaces the plan --------------------------------
     const blockedContext = await browser.newContext();
     const blocked = await blockedContext.newPage();
+    current = blocked;
     blocked.on('pageerror', (error) => pageErrors.push(error.message));
     await blocked.goto(url);
     step('onboarding renders');
@@ -128,11 +133,15 @@ async function main(): Promise<void> {
     // --- Happy path ---------------------------------------------------------------------------
     const context = await browser.newContext({ acceptDownloads: true });
     const page = await context.newPage();
+    current = page;
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.goto(url);
     await completeOnboarding(page);
     await page.getByTestId('plan-screen').waitFor();
-    await page.getByTestId('today-card').waitFor();
+    const todayCard = page.locator('[data-testid^="today-card-"]');
+    await todayCard.waitFor();
+    const sessionId = (await todayCard.getAttribute('data-testid'))?.replace('today-card-', '');
+    assert(sessionId, 'the today card names its session');
     const sessions = await page.locator('[data-testid^="session-"]').count();
     assert(sessions >= 1, 'the plan shows sessions for the week');
     await snap(page, 'plan');
@@ -153,8 +162,19 @@ async function main(): Promise<void> {
     step(`logged a set (${reps} reps prefilled) and the rest timer started`);
     await page.getByTestId('finish-workout').click();
     await page.getByTestId('plan-screen').waitFor();
-    await page.getByText('Done', { exact: true }).first().waitFor();
-    step('finished the workout; the session shows as done');
+    const status = await page.getByTestId(`status-${sessionId}`).innerText();
+    assert(status === 'Done', `the logged session's status is "${status}", expected "Done"`);
+    step('finished the workout; that session shows as Done');
+
+    await page.getByTestId(`open-session-${sessionId}`).click();
+    await page.getByTestId('workout-readonly').waitFor();
+    assert(
+      (await page.getByTestId('finish-workout').count()) === 0,
+      'a done session opens read-only (no second log)',
+    );
+    await page.getByText('Back to plan').click();
+    await page.getByTestId('plan-screen').waitFor();
+    step('a done session opens read-only with its log');
 
     await page.getByTestId('tab-progress').click();
     await page.getByTestId('progress-screen').waitFor();
@@ -205,6 +225,32 @@ async function main(): Promise<void> {
     assert(exported.scheduleChanges.length >= 1, 'export contains the schedule changes');
     step(`exported ${download.suggestedFilename()}`);
 
+    // Edited answers that fail screening remove the plan (review B1).
+    await page.getByTestId('edit-answers').click();
+    await page.getByTestId('onboarding-about').waitFor();
+    for (let i = 0; i < 2; i += 1) {
+      await page.getByTestId('onboarding-next').click();
+    }
+    await page.getByTestId('parq-chest_pain-yes').click();
+    await page.getByTestId('onboarding-next').click();
+    await page.getByTestId('disclaimer-checkbox').click();
+    await page.getByTestId('consent-checkbox').click();
+    await page.getByTestId('onboarding-submit').click();
+    await page
+      .getByTestId('onboarding-blocked')
+      .getByTestId('screening-message')
+      .getByText(/consult a doctor/i)
+      .waitFor();
+    await page.goto(url);
+    await page.getByTestId('plan-blocked').waitFor();
+    assert(
+      (await page.getByTestId('start-today').count()) === 0,
+      'no usable plan after a red flag',
+    );
+    step('edited answers with a red flag: the plan is gone and the doctor message shows');
+
+    await page.getByTestId('tab-settings').click();
+    await page.getByTestId('settings-screen').waitFor();
     await page.getByTestId('delete-data').click();
     await page.getByTestId('delete-data').click();
     await page.getByTestId('onboarding-about').waitFor();
@@ -215,6 +261,13 @@ async function main(): Promise<void> {
 
     assert(pageErrors.length === 0, `page errors: ${pageErrors.join(' | ')}`);
     console.log(`\nweb e2e passed (${steps.length} checks)`);
+  } catch (error) {
+    if (current && !current.isClosed()) {
+      await snap(current, 'failure').catch((snapError: unknown) => {
+        console.error('Could not save the failure screenshot:', snapError);
+      });
+    }
+    throw error;
   } finally {
     await browser.close();
     server.close();

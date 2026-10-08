@@ -1,6 +1,7 @@
 import type { PlannedSession, RescheduleEvent, ScheduleProposal } from '@fitness/engine';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { screen } from '../engine/engine-service';
 import { minimumDoseProposal, rescheduleProposals } from '../logic/actions';
 import { formatShortDate } from '../logic/labels';
 import {
@@ -59,11 +60,28 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
   const { plan, profile } = data;
 
   if (!plan || !profile) {
+    // After edited answers fail screening the plan is removed; say why instead of a blank state.
+    const screening = profile ? screen(profile, store.today()) : null;
+    if (screening && !screening.ok) {
+      return (
+        <Screen testID="plan-blocked">
+          <Title>Please check with a professional first</Title>
+          <Card testID="screening-message">
+            <Body>{screening.message}</Body>
+          </Card>
+          <Button label="Review my answers" onPress={onEditAnswers} testID="review-answers" />
+        </Screen>
+      );
+    }
     return (
       <Screen testID="plan-empty">
         <Title>No active plan</Title>
         <Body>Answer a few questions and we will build a plan for you.</Body>
-        <Button label="Start onboarding" onPress={onEditAnswers} testID="start-onboarding" />
+        <Button
+          label={profile ? 'Review my answers' : 'Start onboarding'}
+          onPress={onEditAnswers}
+          testID="start-onboarding"
+        />
       </Screen>
     );
   }
@@ -120,7 +138,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
     <Screen testID="plan-screen">
       <Title>Your plan</Title>
       {next ? (
-        <Card testID="today-card">
+        <Card testID={`today-card-${next.session.id}`}>
           <Body muted>
             {next.isToday
               ? 'Today'
@@ -135,6 +153,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
             onPress={() => {
               onOpenSession(next.session.id);
             }}
+            disabled={store.busy}
             testID="start-today"
           />
         </Card>
@@ -171,7 +190,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
               onPress={() => {
                 onOpenSession(session.id);
               }}
-              testID={`open-session-${session.day_index}`}
+              testID={`open-session-${session.id}`}
               style={styles.sessionHeader}
             >
               <View style={styles.sessionTitle}>
@@ -183,7 +202,11 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                   {session.status === 'moved' ? ' · moved' : ''}
                 </Body>
               </View>
-              <Badge label={SESSION_STATUS_LABELS[status]} tone={STATUS_TONES[status]} />
+              <Badge
+                label={SESSION_STATUS_LABELS[status]}
+                tone={STATUS_TONES[status]}
+                testID={`status-${session.id}`}
+              />
             </Pressable>
             {open ? (
               <Row>
@@ -194,6 +217,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                     onPress={() => {
                       openPanel({ sessionId: session.id, mode: 'missed' });
                     }}
+                    disabled={store.busy}
                     testID="reschedule-missed"
                   />
                 ) : (
@@ -204,6 +228,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                       onPress={() => {
                         openPanel({ sessionId: session.id, mode: 'missed' });
                       }}
+                      disabled={store.busy}
                       testID="cant-make-it"
                     />
                     <Button
@@ -212,6 +237,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                       onPress={() => {
                         openPanel({ sessionId: session.id, mode: 'shorten', minutes: 30 });
                       }}
+                      disabled={store.busy}
                       testID="short-on-time"
                     />
                   </>
@@ -223,6 +249,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                     onPress={() => {
                       applyMinimumDose(session);
                     }}
+                    disabled={store.busy}
                     testID="minimum-dose"
                   />
                 ) : null}
@@ -249,6 +276,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                 ) : null}
                 <ProposalList
                   proposals={panel.proposals}
+                  busy={store.busy}
                   onAccept={(proposal) => {
                     run(() => store.acceptProposal(proposal), 'Your week has been updated.');
                   }}
@@ -278,9 +306,11 @@ const KIND_LABELS: Record<ScheduleProposal['kind'], string> = {
 
 function ProposalList({
   proposals,
+  busy,
   onAccept,
 }: {
   proposals: ScheduleProposal[];
+  busy: boolean;
   onAccept: (proposal: ScheduleProposal) => void;
 }) {
   if (proposals.length === 0) {
@@ -306,6 +336,7 @@ function ProposalList({
             onPress={() => {
               onAccept(proposal);
             }}
+            disabled={busy}
             testID={`accept-proposal-${index}`}
           />
         </View>

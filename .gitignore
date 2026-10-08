@@ -11,6 +11,7 @@ coverage/
 .expo/
 .expo-shared/
 web-build/
+e2e-artifacts/
 ios/
 android/
 *.jks

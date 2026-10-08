@@ -58,4 +58,15 @@ describe('OnboardingScreen (smoke)', () => {
     fireEvent.click(screen.getByTestId('review-answers'));
     expect(screen.getByTestId('onboarding-about')).toBeTruthy();
   });
+
+  it('labels PAR-Q+ answers with their question as radio buttons', () => {
+    renderScreen(undefined, completedDraft());
+    fireEvent.click(screen.getByTestId('onboarding-next'));
+    fireEvent.click(screen.getByTestId('onboarding-next'));
+    const no = screen.getByTestId('parq-chest_pain-no');
+    expect(no.getAttribute('role')).toBe('radio');
+    expect(no.getAttribute('aria-checked')).toBe('true');
+    expect(no.getAttribute('aria-label')).toMatch(/^Do you feel pain in your chest.* No$/);
+    expect(screen.getAllByRole('radiogroup')).toHaveLength(7);
+  });
 });

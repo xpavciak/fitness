@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { findSession } from '../logic/plan-view';
+import { findSession, sessionLog } from '../logic/plan-view';
 import {
   buildWorkoutDraft,
   completedSetCount,
-  MAX_RIR_INPUT,
+  stepRir,
+  summarizeLog,
   toggleSetCompleted,
   updateSet,
   workoutLogFromDraft,
   type ExerciseDraft,
   type WorkoutDraft,
 } from '../logic/workout';
+import { formatShortDate } from '../logic/labels';
 import type { AppData } from '../storage/repository';
 import { useStore } from '../state/store';
 import {
@@ -24,6 +26,7 @@ import {
   Screen,
   Title,
 } from '../ui/components';
+import { MIN_TOUCH } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
 import { RestTimer, type RestTimerState } from './RestTimer';
 
@@ -37,8 +40,10 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
   const store = useStore();
   const found = data.plan ? findSession(data.plan, sessionId) : null;
   const profile = data.profile;
+  // A done session opens read-only: logging it again would create a second log.
+  const existingLog = found ? sessionLog(data.workoutLogs, found.session.id) : null;
   const [draft, setDraft] = useState<WorkoutDraft | null>(() =>
-    found && profile
+    found && profile && !existingLog && found.session.status !== 'done'
       ? buildWorkoutDraft(found.session, data.workoutLogs, {
           today: store.today(),
           timezone: profile.timezone,
@@ -51,6 +56,34 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [finishError, setFinishError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  if (found && (existingLog || found.session.status === 'done')) {
+    return (
+      <Screen testID="workout-readonly">
+        <Title>{found.session.title}</Title>
+        <Body muted>
+          Done
+          {existingLog ? ` on ${formatShortDate(existingLog.started_at.slice(0, 10))}` : ''}. This
+          workout is already logged.
+        </Body>
+        {existingLog ? (
+          summarizeLog(existingLog).map((exercise) => (
+            <Card key={exercise.exerciseId} testID={`logged-${exercise.exerciseId}`}>
+              <Heading>{exercise.name}</Heading>
+              {exercise.sets.map((line, index) => (
+                <Body key={`${exercise.exerciseId}-${index}`}>
+                  Set {index + 1}: {line}
+                </Body>
+              ))}
+            </Card>
+          ))
+        ) : (
+          <Body muted>The log for this session is not on this device.</Body>
+        )}
+        <Button label="Back to plan" variant="secondary" onPress={onFinished} />
+      </Screen>
+    );
+  }
 
   if (!found || !profile || !draft) {
     return (
@@ -72,7 +105,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
     }
     const { [key]: _cleared, ...rest } = errors;
     setErrors(rest);
-    setDraft(result.draft);
+    setDraft(() => result.draft);
     setTimer(
       result.restSec > 0 ? { durationSec: result.restSec, startedAtMs: Date.parse(now) } : null,
     );
@@ -119,7 +152,9 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
           exerciseIndex={exerciseIndex}
           errors={errors}
           onChange={(setIndex, update) => {
-            setDraft(updateSet(draft, exerciseIndex, setIndex, update));
+            setDraft((current) =>
+              current ? updateSet(current, exerciseIndex, setIndex, update) : current,
+            );
           }}
           onToggle={(setIndex) => {
             toggle(exerciseIndex, setIndex);
@@ -129,7 +164,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
       {finishError !== null ? <ErrorText testID="finish-error">{finishError}</ErrorText> : null}
       <Button
         label={saving ? 'Saving...' : 'Finish workout'}
-        disabled={saving}
+        disabled={saving || store.busy}
         onPress={finish}
         testID="finish-workout"
       />
@@ -208,10 +243,7 @@ function ExerciseCard({
                   onPress={() => {
                     onChange(setIndex, (current) => ({
                       ...current,
-                      rir:
-                        current.rir === undefined || current.rir === 0
-                          ? undefined
-                          : current.rir - 1,
+                      rir: stepRir(current.rir, -1),
                     }));
                   }}
                   style={styles.stepper}
@@ -228,7 +260,7 @@ function ExerciseCard({
                   onPress={() => {
                     onChange(setIndex, (current) => ({
                       ...current,
-                      rir: Math.min(MAX_RIR_INPUT, (current.rir ?? -1) + 1),
+                      rir: stepRir(current.rir, 1),
                     }));
                   }}
                   style={styles.stepper}
@@ -240,7 +272,7 @@ function ExerciseCard({
             </View>
             <Pressable
               accessibilityRole="checkbox"
-              accessibilityState={{ checked: set.completed }}
+              aria-checked={set.completed}
               accessibilityLabel={`Complete set ${setIndex + 1}`}
               onPress={() => {
                 onToggle(setIndex);
@@ -284,8 +316,8 @@ const styles = StyleSheet.create({
   rirControls: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   rirValue: { minWidth: 18, textAlign: 'center', fontSize: 16 },
   stepper: {
-    width: 32,
-    height: 36,
+    width: MIN_TOUCH,
+    height: MIN_TOUCH,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: colors.border,
@@ -294,7 +326,7 @@ const styles = StyleSheet.create({
   },
   complete: {
     minWidth: 64,
-    height: 40,
+    height: MIN_TOUCH,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.success,

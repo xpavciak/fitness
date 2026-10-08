@@ -83,6 +83,7 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
             label="Edit my answers"
             variant="secondary"
             onPress={onEditAnswers}
+            disabled={store.busy}
             testID="edit-answers"
           />
         </Card>
@@ -91,16 +92,21 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
       <Card>
         <Heading>Your data</Heading>
         <Body muted>Everything is stored only on this device. Cloud sync is not enabled.</Body>
+        <Body muted>
+          Dates follow the time zone saved when you set up your plan
+          {profile ? ` (${profile.timezone})` : ''}.
+        </Body>
         <Button
           label="Export my data (JSON)"
           variant="secondary"
           onPress={exportData}
+          disabled={store.busy}
           testID="export-data"
         />
         <Button
           label={confirm === 'regenerate' ? 'Tap again to replace your plan' : 'Regenerate plan'}
           variant="secondary"
-          disabled={!profile || !goal}
+          disabled={store.busy || !profile || !goal}
           onPress={regenerate}
           testID="regenerate-plan"
         />
@@ -109,6 +115,7 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
           label={confirm === 'delete' ? 'Tap again to delete everything' : 'Delete all local data'}
           variant="danger"
           onPress={deleteAll}
+          disabled={store.busy}
           testID="delete-data"
         />
         {confirm !== null ? (
