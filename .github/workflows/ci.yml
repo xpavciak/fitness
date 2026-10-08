@@ -15,7 +15,7 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -34,4 +34,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm typecheck
       - run: pnpm test
+      # Includes the Expo web export of apps/mobile (expo export --platform web).
       - run: pnpm build
+      # Web e2e smoke test of the exported app (onboarding -> plan -> log -> progress).
+      - run: pnpm --filter @fitness/mobile exec playwright-core install --with-deps chromium
+      - run: pnpm e2e:web
