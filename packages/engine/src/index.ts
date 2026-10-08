@@ -15,3 +15,7 @@ export * from './plan/generate.js';
 // Feature B: progression, e1RM and personal records (T5)
 export * from './progression/next-targets.js';
 export * from './progression/one-rep-max.js';
+// Feature C: adaptive rescheduling and the minimum dose (T6)
+export * from './schedule/session-variants.js';
+export * from './schedule/reschedule.js';
+export * from './schedule/apply.js';
