@@ -14,6 +14,7 @@
     "test": "pnpm -r --if-present run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "e2e:web": "pnpm --filter @fitness/mobile run e2e:web",
     "db:seed": "pnpm --filter @fitness/engine run build && node supabase/scripts/gen-seed.ts",
     "db:verify": "bash supabase/scripts/verify-migrations.sh"
   },
@@ -22,6 +23,7 @@
     "@types/node": "^22.20.5",
     "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
     "prettier": "^3.9.9",
     "typescript": "~6.0.3",

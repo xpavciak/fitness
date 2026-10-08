@@ -1,6 +1,7 @@
 // @ts-check
 import eslint from '@eslint/js';
 import prettier from 'eslint-config-prettier';
+import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -33,6 +34,13 @@ export default tseslint.config(
         },
       ],
     },
+  },
+  {
+    // Expo app (apps/mobile): React hooks rules and browser globals (web target).
+    files: ['apps/mobile/**/*.{ts,tsx}'],
+    plugins: { 'react-hooks': reactHooks },
+    languageOptions: { globals: { ...globals.browser } },
+    rules: { ...reactHooks.configs.recommended.rules },
   },
   {
     files: ['**/*.js'],
