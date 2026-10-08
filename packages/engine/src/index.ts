@@ -21,3 +21,6 @@ export * from './schedule/reschedule.js';
 export * from './schedule/apply.js';
 // Feature D: adherence and weekly streaks (T7)
 export * from './adherence/adherence.js';
+// D5: coach texts (plan explanation, weekly reflection) with a template fallback (T10)
+export * from './coach/template-provider.js';
+export * from './coach/claude-provider.js';
