@@ -4,6 +4,8 @@ import {
   confirmStep,
   CONFIRM_MIN_DELAY_MS,
   CONFIRM_WINDOW_MS,
+  settled,
+  SETTLE_MS,
   TAP_GUARD_MS,
 } from './taps';
 
@@ -28,5 +30,13 @@ describe('acceptTap (double-tap guard)', () => {
     expect(acceptTap(1000, 1000 + 50)).toBe(false);
     expect(acceptTap(1000, 1000 + TAP_GUARD_MS)).toBe(true);
     expect(acceptTap(1000, 10)).toBe(true);
+  });
+});
+
+describe('settled (taps right after a screen regains focus)', () => {
+  it('ignores taps inside the settle window only', () => {
+    expect(settled(null, 0)).toBe(true);
+    expect(settled(1000, 1000 + 100)).toBe(false);
+    expect(settled(1000, 1000 + SETTLE_MS)).toBe(true);
   });
 });

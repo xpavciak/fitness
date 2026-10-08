@@ -261,3 +261,27 @@ describe('LocalRepository: in-progress workout drafts', () => {
     expect(order[0]).toBe(`remove ${STORAGE_KEYS.plan}`);
   });
 });
+
+describe('LocalRepository: drafts in the export and pruning', () => {
+  const draft = (sessionId: string) => ({
+    id: '00000009-0000-4000-8000-000000000001',
+    session_id: sessionId,
+    started_at: at(session.scheduled_date),
+    saved_at: at(session.scheduled_date),
+    sets: [],
+  });
+
+  it('exports in-progress drafts', async () => {
+    await repo.saveWorkoutDraft(draft(session.id));
+    const exported = await repo.exportData('2026-10-08T12:00:00.000Z');
+    expect(exported.workoutDrafts).toEqual([draft(session.id)]);
+  });
+
+  it('prunes drafts outside the kept sessions', async () => {
+    const other = must(plan.weeks[0]?.sessions[1]).id;
+    await repo.saveWorkoutDraft(draft(session.id));
+    await repo.saveWorkoutDraft(draft(other));
+    await expect(repo.pruneWorkoutDrafts(new Set([session.id]))).resolves.toEqual([other]);
+    expect(store.keys()).toEqual([`${WORKOUT_DRAFT_PREFIX}${session.id}`]);
+  });
+});

@@ -8,8 +8,13 @@
 export const CONFIRM_MIN_DELAY_MS = 600;
 /** After this long the first tap expires and the next tap arms again. */
 export const CONFIRM_WINDOW_MS = 6000;
-/** Taps on guarded controls closer together than this are treated as one (double-tap guard). */
+/** Repeat taps on the same control closer together than this are treated as one. */
 export const TAP_GUARD_MS = 600;
+/**
+ * After a screen regains focus (e.g. back from a workout), its controls ignore taps this long, so
+ * the second tap of a double tap on the previous screen cannot land on them.
+ */
+export const SETTLE_MS = 400;
 
 export type ConfirmStep = 'arm' | 'ignore' | 'confirm';
 
@@ -24,6 +29,11 @@ export function confirmStep(armedAt: number | null, now: number): ConfirmStep {
 /** True when a guarded tap at `now` should run (the previous accepted one was `lastAt`). */
 export function acceptTap(lastAt: number | null, now: number): boolean {
   return lastAt === null || now < lastAt || now - lastAt >= TAP_GUARD_MS;
+}
+
+/** True when a tap at `now` comes after the settle window that started at `settledFrom`. */
+export function settled(settledFrom: number | null, now: number): boolean {
+  return settledFrom === null || now < settledFrom || now - settledFrom >= SETTLE_MS;
 }
 
 /** Wall clock in ms (a module function so components never call `Date.now` during render). */

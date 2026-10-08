@@ -80,6 +80,8 @@ export interface DataExport extends AppData {
   format: typeof EXPORT_FORMAT;
   version: typeof EXPORT_VERSION;
   exported_at: string;
+  /** Unfinished workouts (the user's inputs), one per session. */
+  workoutDrafts: SavedWorkoutDraft[];
 }
 
 /**
@@ -117,6 +119,8 @@ export interface Repository {
   loadWorkoutDraft(sessionId: string): Promise<SavedWorkoutDraft | null>;
   saveWorkoutDraft(draft: SavedWorkoutDraft): Promise<void>;
   removeWorkoutDraft(sessionId: string): Promise<void>;
+  /** Removes drafts of sessions not in `keep` (e.g. after a regenerate); returns their session ids. */
+  pruneWorkoutDrafts(keep: ReadonlySet<string>): Promise<string[]>;
   /** Deletes every key this app stores on the device; throws `ClearDataError` listing failures. */
   clearAll(): Promise<void>;
 }
@@ -280,26 +284,55 @@ export class LocalRepository implements Repository {
   exportData(exportedAt: string): Promise<DataExport> {
     return this.queue.run(async () => {
       const data = await this.loadUnlocked();
-      return { format: EXPORT_FORMAT, version: EXPORT_VERSION, exported_at: exportedAt, ...data };
+      const workoutDrafts: SavedWorkoutDraft[] = [];
+      for (const key of await this.draftKeys()) {
+        const draft = await this.readDraft(key);
+        if (draft) {
+          workoutDrafts.push(draft);
+        }
+      }
+      return {
+        format: EXPORT_FORMAT,
+        version: EXPORT_VERSION,
+        exported_at: exportedAt,
+        ...data,
+        workoutDrafts,
+      };
     });
   }
 
   loadWorkoutDraft(sessionId: string): Promise<SavedWorkoutDraft | null> {
+    return this.queue.run(() => this.readDraft(draftKey(sessionId)));
+  }
+
+  pruneWorkoutDrafts(keep: ReadonlySet<string>): Promise<string[]> {
     return this.queue.run(async () => {
-      const key = draftKey(sessionId);
-      const raw = await this.store.getItem(key);
-      if (raw === null) {
-        return null;
+      const removed: string[] = [];
+      for (const key of await this.draftKeys()) {
+        const sessionId = key.slice(WORKOUT_DRAFT_PREFIX.length);
+        if (!keep.has(sessionId)) {
+          await this.store.removeItem(key);
+          removed.push(sessionId);
+        }
       }
-      const result = SavedWorkoutDraftSchema.safeParse(parseJson(key, raw));
-      if (!result.success || result.data.session_id !== sessionId) {
-        throw new StoredDataError(
-          key,
-          result.success ? 'session id mismatch' : result.error.message,
-        );
-      }
-      return result.data;
+      return removed;
     });
+  }
+
+  private async draftKeys(): Promise<string[]> {
+    return (await this.store.getAllKeys()).filter((key) => key.startsWith(WORKOUT_DRAFT_PREFIX));
+  }
+
+  private async readDraft(key: string): Promise<SavedWorkoutDraft | null> {
+    const raw = await this.store.getItem(key);
+    if (raw === null) {
+      return null;
+    }
+    const result = SavedWorkoutDraftSchema.safeParse(parseJson(key, raw));
+    if (!result.success || key !== `${WORKOUT_DRAFT_PREFIX}${result.data.session_id}`) {
+      throw new StoredDataError(key, result.success ? 'session id mismatch' : result.error.message);
+    }
+    return result.data;
   }
 
   saveWorkoutDraft(draft: SavedWorkoutDraft): Promise<void> {
@@ -315,10 +348,7 @@ export class LocalRepository implements Repository {
 
   clearAll(): Promise<void> {
     return this.queue.run(async () => {
-      const drafts = (await this.store.getAllKeys()).filter((key) =>
-        key.startsWith(WORKOUT_DRAFT_PREFIX),
-      );
-      const keys = [...Object.values(STORAGE_KEYS), ...drafts];
+      const keys = [...Object.values(STORAGE_KEYS), ...(await this.draftKeys())];
       const results = await Promise.allSettled(keys.map((key) => this.store.removeItem(key)));
       const failed = keys.filter((_, index) => results[index]?.status === 'rejected');
       if (failed.length > 0) {

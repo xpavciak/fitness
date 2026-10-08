@@ -1,4 +1,4 @@
-import type { ScheduleProposal, WorkoutLog } from '@fitness/engine';
+import type { Plan, ScheduleProposal, WorkoutLog } from '@fitness/engine';
 import type { PlanResult } from '../engine/engine-service';
 import { SerialQueue } from '../lib/serial-queue';
 import {
@@ -39,6 +39,10 @@ export interface StoreSnapshot {
   busy: boolean;
   /** Bumped when "today" may have changed (app foregrounded, screen focused). */
   clock: number;
+}
+
+function sessionIds(plan: Plan): Set<string> {
+  return new Set(plan.weeks.flatMap((week) => week.sessions.map((session) => session.id)));
 }
 
 function errorMessage(error: unknown): string {
@@ -86,7 +90,10 @@ export class AppController {
   }
 
   load(): Promise<void> {
-    return this.enqueue(() => this.resync());
+    return this.enqueue(async () => {
+      await this.resync();
+      await this.pruneDrafts();
+    });
   }
 
   /**
@@ -106,6 +113,7 @@ export class AppController {
       if (result.ok) {
         const { plan, warnings } = result;
         await this.services.repository.saveSetup({ profile, goal, plan, warnings });
+        await this.services.repository.pruneWorkoutDrafts(sessionIds(plan));
         return {
           data: { ...data, profile, goal, plan, planNotes: { plan_id: plan.id, warnings } },
           result,
@@ -115,6 +123,7 @@ export class AppController {
         return { data, result };
       }
       await this.services.repository.saveSetup({ profile, goal, plan: null });
+      await this.services.repository.pruneWorkoutDrafts(new Set());
       return { data: { ...data, profile, goal, plan: null, planNotes: null }, result };
     });
   }
@@ -180,9 +189,11 @@ export class AppController {
       if (result.ok) {
         const { plan, warnings } = result;
         await this.services.repository.saveNewPlan(plan, warnings);
+        await this.services.repository.pruneWorkoutDrafts(sessionIds(plan));
         return { data: { ...data, plan, planNotes: { plan_id: plan.id, warnings } }, result };
       }
       await this.services.repository.removePlan();
+      await this.services.repository.pruneWorkoutDrafts(new Set());
       return { data: { ...data, plan: null, planNotes: null }, result };
     });
   }
@@ -201,12 +212,18 @@ export class AppController {
     return this.enqueue(async () => {
       try {
         await this.services.repository.clearAll();
-        await this.services.deleteExportFiles?.();
       } catch (error) {
         await this.resync();
         throw error;
       }
       this.publish({ state: { status: 'ready', data: EMPTY_APP_DATA } });
+      // Best effort: the app data is gone. A failure to remove leftover export files from the
+      // native cache (which the OS clears eventually) must not report the delete as failed.
+      try {
+        await this.services.deleteExportFiles?.();
+      } catch (error) {
+        console.warn('Could not remove exported files from the cache:', errorMessage(error));
+      }
     });
   }
 
@@ -246,6 +263,24 @@ export class AppController {
         throw error;
       }
     });
+  }
+
+  /**
+   * Removes saved workout drafts whose session is not in the active plan (all of them when there
+   * is no plan). Housekeeping only: a failure is logged and never blocks loading.
+   */
+  private async pruneDrafts(): Promise<void> {
+    const { state } = this.snapshot;
+    if (state.status !== 'ready') {
+      return;
+    }
+    try {
+      await this.services.repository.pruneWorkoutDrafts(
+        state.data.plan ? sessionIds(state.data.plan) : new Set(),
+      );
+    } catch (error) {
+      console.warn('Could not prune saved workout drafts:', errorMessage(error));
+    }
   }
 
   /** Re-reads everything from the repository (the source of truth). */

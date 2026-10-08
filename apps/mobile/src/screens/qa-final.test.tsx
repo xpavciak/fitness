@@ -4,7 +4,7 @@
  * These are regression tests (they started as `it.fails` bug markers).
  */
 import type { WorkoutLog } from '@fitness/engine';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSeededIdGenerator } from '@fitness/engine';
 import { AppController, type Services } from '../state/app-controller';
@@ -97,6 +97,25 @@ describe('QA final - Settings: deliberate confirmation still works', () => {
       });
       expect((await services.repository.load()).profile).toBeNull();
     } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('the armed "Tap again" label clears itself after 6 s', async () => {
+    let now = 2_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      await renderSettings();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      fireEvent.click(screen.getByTestId('delete-data'));
+      expect(screen.getByText('Tap again to delete everything')).toBeTruthy();
+      now += 6100;
+      act(() => {
+        vi.advanceTimersByTime(6100);
+      });
+      expect(screen.getByText('Delete all local data')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
       clock.mockRestore();
     }
   });

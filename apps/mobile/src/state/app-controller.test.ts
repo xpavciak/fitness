@@ -320,3 +320,47 @@ describe('AppController: workout drafts and export files', () => {
     expect(store.keys()).toEqual([]);
   });
 });
+
+describe('AppController: draft housekeeping and best-effort cleanup', () => {
+  const orphan = {
+    id: '00000008-0000-4000-8000-000000000001',
+    session_id: '00000008-0000-4000-8000-0000000000ff',
+    started_at: NOW,
+    saved_at: NOW,
+    sets: [],
+  };
+
+  it('prunes drafts of sessions that are no longer in the plan, on load and on regenerate', async () => {
+    await onboard();
+    const [first] = sessionsByDate(must(must(data().plan).weeks[0]));
+    await repository.saveWorkoutDraft(orphan);
+    await repository.saveWorkoutDraft({ ...orphan, session_id: must(first).id });
+    await controller.load();
+    await expect(repository.loadWorkoutDraft(orphan.session_id)).resolves.toBeNull();
+    await expect(repository.loadWorkoutDraft(must(first).id)).resolves.not.toBeNull();
+
+    await controller.regeneratePlan(); // new session ids
+    await expect(repository.loadWorkoutDraft(must(first).id)).resolves.toBeNull();
+  });
+
+  it('reports delete-all as done when only the export-file cleanup fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      setup();
+      controller = new AppController({
+        ...controller.services,
+        deleteExportFiles: () => Promise.reject(new Error('cache locked')),
+      });
+      await onboard();
+      await expect(controller.deleteAllData()).resolves.toBeUndefined();
+      expect(data().profile).toBeNull();
+      expect(store.keys()).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not remove exported files from the cache:',
+        'cache locked',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

@@ -68,7 +68,10 @@ AsyncStorage keys (`fitness/v1/...`):
 - `goal`
 - `plan` (the active plan)
 - `workout_draft/<session id>`: the in-progress workout's inputs (`SavedWorkoutDraftSchema`). It is
-  saved after every change, so a reload or an app kill keeps completed sets. Finish, "Discard
+  created on the first change and saved after every change after that, so a reload or an app
+  kill keeps completed sets. Drafts whose session is no longer in the plan are pruned on load,
+  on regenerate and when screening removes the plan. The JSON export includes them
+  (`workoutDrafts`). Finish, "Discard
   workout" and delete-all remove it.
 - `plan_notes`: `{ plan_id, warnings }`, the generator's warnings for the active plan, shown on
   the Plan screen. Notes with another `plan_id` are ignored.
@@ -81,7 +84,8 @@ writes the plan (or removes it) before the goal and profile. Regenerating the pl
 data" writes all keys as one JSON document (`format: "fitness-app-export"`, `version: 1`). On web
 the document is downloaded (`share-json.web.ts`). On native it is written to a cache file with
 `expo-file-system`, shared as a file with `expo-sharing`, and deleted again afterwards
-(`share-json.ts`). Delete-all also removes any leftover `fitness-data-*.json` files from the cache. "Delete all local data" removes
+(`share-json.ts`). Delete-all also removes any leftover `fitness-data-*.json` files from the cache. This cleanup is
+best effort: if it fails, the delete still succeeds and a warning is logged. "Delete all local data" removes
 every key and reports any key it could not delete (`ClearDataError`).
 
 When onboarding hits a PAR-Q+ red flag, or the user may be under 18, the app shows the engine's
@@ -122,6 +126,10 @@ Metro would have to map them to `.ts`, so consuming `dist` is the safe default.
 - **Two-step confirm** (delete all, regenerate the plan, discard a workout): the first tap arms
   the button. A second tap within 600 ms is ignored, so a double tap never confirms. A
   deliberate later tap confirms (`src/logic/taps.ts`).
-- **Double-tap guard** (Plan screen actions and session headers): a tap within 600 ms of the
-  previous guarded tap is dropped, so the second tap of a double tap cannot hit what moved under
-  the finger. The guard resets on every screen visit.
+- **Double-tap guard** (Plan screen actions and session headers):
+  - **Per control:** a repeat tap on the _same_ control within 600 ms is dropped. A tap on a
+    different control (e.g. Accept right after "Can't make it") goes through.
+  - **Settle:** for 400 ms after the screen regains focus (e.g. back from "Finish workout") or
+    the app is foregrounded, its controls ignore taps. The second tap of a double tap on the
+    previous screen therefore lands on nothing.
+  - **Expiry:** an armed two-step confirm clears its "Tap again…" label after 6 s.

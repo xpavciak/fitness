@@ -45,30 +45,58 @@ function LivePlan({ onOpenSession }: { onOpenSession: (id: string) => void }) {
   ) : null;
 }
 
-describe('PlanScreen (QA: minimum dose double tap)', () => {
-  it('a double tap on "Minimum dose" applies it once and never opens a session', async () => {
+describe('PlanScreen: double-tap guard', () => {
+  it('a double tap on "Minimum dose" applies it once', async () => {
     const services = await onboardedServices();
-    const onOpenSession = vi.fn();
     render(
       <StoreProvider services={services}>
-        <LivePlan onOpenSession={onOpenSession} />
+        <LivePlan onOpenSession={vi.fn()} />
       </StoreProvider>,
     );
-    const first = await screen.findAllByTestId('minimum-dose');
-    fireEvent.click(must(first[0]));
-    // The second tap of the double tap lands on the session header the layout moved under it.
-    fireEvent.click(must(screen.getAllByTestId(/^open-session-/)[0]));
+    const button = must((await screen.findAllByTestId('minimum-dose'))[0]);
+    fireEvent.click(button);
+    fireEvent.click(button);
     await screen.findByTestId('notice');
-    expect(onOpenSession).not.toHaveBeenCalled();
     const plan = must((await services.repository.load()).plan);
     const doses = sessionsByDate(must(plan.weeks[0])).filter((s) => s.variant === 'minimum_dose');
     expect(doses).toHaveLength(1);
     expect(screen.getByTestId('notice').textContent).toMatch(/minimum-dose/);
-    await waitFor(() => {
-      expect(screen.getAllByTestId('start-today')[0]?.getAttribute('aria-disabled')).not.toBe(
-        'true',
+  });
+
+  it('ignores taps for 400 ms after the screen regains focus (e.g. back from a workout)', async () => {
+    let now = 7_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const services = await onboardedServices();
+      const onOpenSession = vi.fn();
+      render(
+        <StoreProvider services={services}>
+          <LivePlan onOpenSession={onOpenSession} />
+        </StoreProvider>,
       );
-    });
+      await screen.findAllByTestId('short-on-time');
+      await waitFor(() => {
+        expect(screen.getAllByTestId('start-today')[0]?.getAttribute('aria-disabled')).not.toBe(
+          'true',
+        );
+      });
+      // The second tap of a double tap on "Finish workout" arrives right after the Plan screen
+      // regains focus: it must not open "Short on time" (QA) or a session.
+      act(() => {
+        must(liveStore).controller.refreshClock();
+      });
+      now += 100;
+      fireEvent.click(must(screen.getAllByTestId('short-on-time')[0]));
+      fireEvent.click(must(screen.getAllByTestId(/^open-session-/)[0]));
+      expect(screen.queryByTestId('proposals')).toBeNull();
+      expect(onOpenSession).not.toHaveBeenCalled();
+      // A deliberate tap once the screen has settled works.
+      now += 400;
+      fireEvent.click(must(screen.getAllByTestId('short-on-time')[0]));
+      expect(screen.getByTestId('proposals')).toBeTruthy();
+    } finally {
+      clock.mockRestore();
+    }
   });
 });
 

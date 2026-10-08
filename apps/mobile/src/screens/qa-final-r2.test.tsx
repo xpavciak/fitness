@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 /**
- * QA final, re-verification after the T9 fix round (dd86fba). `it.fails` marks a BUG that is still
- * open; turn it into a plain `it` once fixed.
+ * QA final, re-verification after the T9 fix round (dd86fba). Fixed; now a regression test.
  */
 import { createSeededIdGenerator } from '@fitness/engine';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -38,13 +37,13 @@ function LivePlan() {
 }
 
 describe('QA final r2 - Plan screen tap guard', () => {
-  // BUG (minor): the 600 ms tap guard is shared by every guarded control on the Plan screen, so a
+  // Was a minor bug: the 600 ms tap guard was shared by every guarded control on the Plan screen, so a
   // deliberate tap on a DIFFERENT control shortly after the previous one is silently dropped.
   // Playwright: "Can't make it" then "Accept" 150/400 ms later -> nothing happens, no feedback, no
   // schedule change stored; at 700 ms it applies. Expected: the guard only drops a repeat tap on
   // the same control (or the tap that lands on what moved under the finger), not a tap on the
   // control that the first tap revealed.
-  it.fails('accepts a proposal tapped 300 ms after opening the panel', async () => {
+  it('accepts a proposal tapped 300 ms after opening the panel', async () => {
     let now = 5_000_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {

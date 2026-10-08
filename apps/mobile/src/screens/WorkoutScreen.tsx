@@ -68,6 +68,8 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
   const [storageError, setStorageError] = useState<string | null>(null);
   // True from "Finish"/"Discard" until the screen closes: no more draft saves, no read-only flash.
   const [closing, setClosing] = useState(false);
+  // Nothing is stored until the user changes something (opening a workout creates no draft).
+  const [dirty, setDirty] = useState(false);
   const discard = useTwoStepConfirm<'discard'>();
 
   // Restore the in-progress workout once (survives a reload or an app kill).
@@ -96,7 +98,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
 
   // Save the inputs after every change.
   useEffect(() => {
-    if (!draft || closing) {
+    if (!draft || closing || !dirty) {
       return;
     }
     repository
@@ -104,7 +106,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
       .catch((cause: unknown) => {
         setStorageError(`Your progress could not be saved on this device: ${message(cause)}`);
       });
-  }, [draft, closing, repository, store.services]);
+  }, [draft, closing, dirty, repository, store.services]);
 
   if (!closing && found && (existingLog || found.session.status === 'done')) {
     return (
@@ -159,6 +161,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
     const { [key]: _cleared, ...rest } = errors;
     setErrors(rest);
     setDraft(() => result.draft);
+    setDirty(true);
     setTimer(
       result.restSec > 0 ? { durationSec: result.restSec, startedAtMs: Date.parse(now) } : null,
     );
@@ -221,6 +224,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
           exerciseIndex={exerciseIndex}
           errors={errors}
           onChange={(setIndex, update) => {
+            setDirty(true);
             setDraft((current) =>
               current ? updateSet(current, exerciseIndex, setIndex, update) : current,
             );
@@ -275,7 +279,8 @@ function ExerciseCard({
       <Heading>{exercise.name}</Heading>
       <Body muted>
         {targets.sets} × {targets.rep_min}–{targets.rep_max}
-        {unit} · target RIR {targets.target_rir}
+        {unit}
+        {exercise.measure === 'seconds' ? '' : ` · target RIR ${targets.target_rir}`}
         {targets.target_load_kg !== undefined ? ` · ${targets.target_load_kg} kg` : ''} · rest{' '}
         {exercise.planned.rest_sec}s
       </Body>

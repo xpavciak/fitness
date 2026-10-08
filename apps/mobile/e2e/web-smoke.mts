@@ -74,6 +74,11 @@ function assert(condition: unknown, message: string): asserts condition {
   }
 }
 
+/** Plan controls ignore taps for 400 ms after the screen gains focus (double-tap guard). */
+async function settle(page: Page): Promise<void> {
+  await page.waitForTimeout(450);
+}
+
 async function completeOnboarding(page: Page, opts: { parqYes?: boolean } = {}): Promise<void> {
   await page.getByTestId('onboarding-about').waitFor();
   await page.getByTestId('birth-year').fill('1990');
@@ -138,6 +143,7 @@ async function main(): Promise<void> {
     await page.goto(url);
     await completeOnboarding(page);
     await page.getByTestId('plan-screen').waitFor();
+    await settle(page);
     const todayCard = page.locator('[data-testid^="today-card-"]');
     await todayCard.waitFor();
     const sessionId = (await todayCard.getAttribute('data-testid'))?.replace('today-card-', '');
@@ -170,11 +176,15 @@ async function main(): Promise<void> {
     const checked = await page.getByTestId('set-0-0-complete').getAttribute('aria-checked');
     assert(checked === 'true', `set 1 is still completed after a reload (aria-checked=${checked})`);
     step('the completed set is still there after a reload');
-    await page.getByTestId('finish-workout').click();
+    // QA r2: a double tap on Finish must not open anything on the Plan screen behind it.
+    await page.getByTestId('finish-workout').dblclick();
     await page.getByTestId('plan-screen').waitFor();
+    await settle(page);
+    assert((await page.getByTestId('proposals').count()) === 0, 'no panel opened by the 2nd tap');
+    assert((await page.getByTestId('workout-screen').count()) === 0, 'no session reopened');
     const status = await page.getByTestId(`status-${sessionId}`).innerText();
     assert(status === 'Done', `the logged session's status is "${status}", expected "Done"`);
-    step('finished the workout; that session shows as Done');
+    step('finished the workout with a double tap; Done, and nothing opened on the Plan screen');
 
     await page.getByTestId(`open-session-${sessionId}`).click();
     await page.getByTestId('workout-readonly').waitFor();
@@ -184,6 +194,7 @@ async function main(): Promise<void> {
     );
     await page.getByText('Back to plan').click();
     await page.getByTestId('plan-screen').waitFor();
+    await settle(page);
     step('a done session opens read-only with its log');
 
     await page.getByTestId('tab-progress').click();
@@ -201,19 +212,18 @@ async function main(): Promise<void> {
     // --- Rescheduling and the minimum dose ----------------------------------------------------
     await page.getByTestId('tab-plan').click();
     await page.getByTestId('plan-screen').waitFor();
+    await settle(page);
     await page.getByTestId('cant-make-it').first().click();
     await page.getByTestId('proposals').waitFor();
     const reasons = await page.getByTestId('proposals').innerText();
     await snap(page, 'proposals');
     assert(/missed|skip/i.test(reasons), `proposal reasons: ${reasons}`);
-    // Taps within 600 ms of the previous one are dropped (double-tap guard); read, then accept.
-    await page.waitForTimeout(700);
+    // Accept right after opening the panel (a different control, so not dropped by the guard).
     await page.getByTestId('accept-proposal-0').click();
     await page.getByText('Your week has been updated.').waitFor();
     step('rescheduling proposals with reasons shown and one accepted');
 
     // QA: a double tap must not open a session when the layout shifts after the first tap.
-    await page.waitForTimeout(700);
     await page.getByTestId('minimum-dose').first().dblclick();
     await page
       .getByTestId('notice')
@@ -226,6 +236,7 @@ async function main(): Promise<void> {
     // --- Persistence, export and delete ------------------------------------------------------
     await page.reload();
     await page.getByTestId('plan-screen').waitFor();
+    await settle(page);
     step('data persists across a reload (local storage)');
 
     await page.getByTestId('tab-settings').click();

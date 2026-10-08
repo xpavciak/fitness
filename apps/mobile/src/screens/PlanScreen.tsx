@@ -176,7 +176,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
           </Body>
           <Button
             label={next.isToday ? 'Start workout' : 'Start now anyway'}
-            onPress={guard(() => {
+            onPress={guard('start-today', () => {
               onOpenSession(next.session.id);
             })}
             disabled={store.busy}
@@ -208,7 +208,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
           <Card key={session.id} testID={`session-${session.id}`}>
             <Pressable
               accessibilityRole="button"
-              onPress={guard(() => {
+              onPress={guard(`open-${session.id}`, () => {
                 onOpenSession(session.id);
               })}
               testID={`open-session-${session.id}`}
@@ -235,7 +235,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                   <Button
                     label="Reschedule"
                     variant="secondary"
-                    onPress={guard(() => {
+                    onPress={guard(`reschedule-${session.id}`, () => {
                       openPanel({ sessionId: session.id, mode: 'missed' });
                     })}
                     disabled={store.busy}
@@ -246,7 +246,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                     <Button
                       label="Can't make it"
                       variant="secondary"
-                      onPress={guard(() => {
+                      onPress={guard(`cant-${session.id}`, () => {
                         openPanel({ sessionId: session.id, mode: 'missed' });
                       })}
                       disabled={store.busy}
@@ -255,7 +255,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                     <Button
                       label="Short on time"
                       variant="secondary"
-                      onPress={guard(() => {
+                      onPress={guard(`short-${session.id}`, () => {
                         openPanel({ sessionId: session.id, mode: 'shorten', minutes: 30 });
                       })}
                       disabled={store.busy}
@@ -267,7 +267,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                   <Button
                     label="Minimum dose (10–15 min)"
                     variant="secondary"
-                    onPress={guard(() => {
+                    onPress={guard(`dose-${session.id}`, () => {
                       applyMinimumDose(session);
                     })}
                     disabled={store.busy}
@@ -304,7 +304,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                 <ProposalList
                   proposals={panel.proposals}
                   busy={store.busy}
-                  onAccept={guard((proposal: ScheduleProposal) => {
+                  onAccept={guard(`accept-${session.id}`, (proposal: ScheduleProposal) => {
                     run(
                       session.id,
                       () => store.acceptProposal(proposal),
