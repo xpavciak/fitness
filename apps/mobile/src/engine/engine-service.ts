@@ -17,6 +17,7 @@ import {
   weeklyStreak,
   TemplateCoachProvider,
   type AdherenceStats,
+  type ExperienceLevel,
   type GeneratePlanResult,
   type Goal,
   type IdGenerator,
@@ -50,9 +51,13 @@ export function createPlan(
 export function targetsFor(
   planned: PlannedExercise,
   sets: readonly SetLog[],
-  opts: { today: string; timezone: string },
+  opts: { today: string; timezone: string; experienceLevel: ExperienceLevel },
 ): NextTargets {
-  return nextTargets(planned, sets, { today: opts.today, timezone: opts.timezone });
+  return nextTargets(planned, sets, {
+    today: opts.today,
+    timezone: opts.timezone,
+    experienceLevel: opts.experienceLevel,
+  });
 }
 
 export function proposalsFor(

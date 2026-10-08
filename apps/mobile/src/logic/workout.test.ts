@@ -30,6 +30,7 @@ function draftFor(
   return buildWorkoutDraft(session, history, {
     today: date,
     timezone: TIMEZONE,
+    experienceLevel: outcome.profile.experience_level,
     now: at(date),
     newId: createSeededIdGenerator(7),
   });

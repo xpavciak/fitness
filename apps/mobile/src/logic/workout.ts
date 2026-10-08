@@ -4,6 +4,7 @@ import {
   getExerciseById,
   maxPerSet,
   type ExerciseMeasure,
+  type ExperienceLevel,
   type IdGenerator,
   type NextTargets,
   type PlannedExercise,
@@ -48,6 +49,8 @@ export interface WorkoutContext {
   /** User's local date. */
   today: string;
   timezone: string;
+  /** The profile's level (beginners progress more conservatively). */
+  experienceLevel: ExperienceLevel;
   now: string;
   newId: IdGenerator;
 }
@@ -65,7 +68,11 @@ export function buildWorkoutDraft(
     .sort((a, b) => a.order - b.order)
     .map((planned): ExerciseDraft => {
       const exercise = getExerciseById(planned.exercise_id);
-      const targets = targetsFor(planned, allSets, { today: ctx.today, timezone: ctx.timezone });
+      const targets = targetsFor(planned, allSets, {
+        today: ctx.today,
+        timezone: ctx.timezone,
+        experienceLevel: ctx.experienceLevel,
+      });
       const loadable = exercise?.loadable ?? false;
       const load = loadable ? (targets.target_load_kg ?? planned.target_load_kg) : 0;
       return {

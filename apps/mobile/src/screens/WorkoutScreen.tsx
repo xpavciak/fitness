@@ -47,6 +47,7 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
       ? buildWorkoutDraft(found.session, data.workoutLogs, {
           today: store.today(),
           timezone: profile.timezone,
+          experienceLevel: profile.experience_level,
           now: store.services.now(),
           newId: store.services.newId,
         })
