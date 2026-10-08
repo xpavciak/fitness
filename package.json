@@ -4,12 +4,12 @@
   "type": "module",
   "packageManager": "pnpm@10.28.0",
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.18"
   },
   "scripts": {
     "build": "pnpm -r --if-present run build",
     "build:packages": "pnpm --filter \"./packages/**\" run build",
-    "typecheck": "pnpm run build:packages && pnpm -r --if-present run typecheck",
+    "typecheck": "pnpm run build:packages && pnpm -r --if-present run typecheck && tsc -p supabase/tsconfig.json",
     "lint": "eslint .",
     "test": "pnpm -r --if-present run test",
     "format": "prettier --write .",

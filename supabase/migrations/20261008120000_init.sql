@@ -15,8 +15,10 @@
 --   and deep JSON validation stay in the engine (Zod) and are documented in README.md.
 -- - Ownership: user-owned roots (`profiles`, `goals`, `plans`, `workout_logs`) carry
 --   `user_id`. Child tables do NOT have a denormalized `user_id` (so they stay 1:1 with
---   the Row schemas); their RLS policies check ownership through the parent chain using
---   the `private.owns_*` helpers below.
+--   the Row schemas); their RLS policies check ownership through the parent chain with
+--   `fk = any (array(select id from parent where ...))`, which the planner evaluates once
+--   per statement (InitPlan) and uses as an index condition on the FK index.
+-- - `updated_at` is always set by the server (trigger on INSERT and UPDATE).
 -- - Deleting the auth user cascades: auth.users -> profiles -> everything else.
 -- =============================================================================
 
@@ -26,10 +28,13 @@
 
 create schema if not exists private;
 revoke all on schema private from public;
--- `authenticated` needs USAGE so RLS policies can call the ownership helpers.
-grant usage on schema private to authenticated;
+-- Functions created here are not executable by PUBLIC unless granted explicitly.
+alter default privileges in schema private revoke execute on functions from public;
+-- Writers need USAGE + EXECUTE on the CHECK-constraint helpers (granted below).
+grant usage on schema private to authenticated, service_role;
 
--- Keeps `updated_at` current on every UPDATE.
+-- Sets `updated_at` to the server time on every INSERT and UPDATE; client values are
+-- ignored, so `updated_at` is the server arrival time used by sync pulls.
 create function private.set_updated_at()
 returns trigger
 language plpgsql
@@ -82,6 +87,41 @@ as $$
   from unnest(values_) as v;
 $$;
 
+-- True when every key is present in the object with JSON type `json_type`.
+create function private.jsonb_keys_have_type(obj jsonb, keys text[], json_type text)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select jsonb_typeof(obj) = 'object'
+     and coalesce(bool_and(coalesce(jsonb_typeof(obj -> k) = json_type, false)), true)
+  from unnest(keys) as k;
+$$;
+
+-- True when every key is present in the object and holds an integer in [min_value, max_value].
+create function private.jsonb_keys_are_ints_between(
+  obj jsonb, keys text[], min_value int, max_value int
+)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select jsonb_typeof(obj) = 'object'
+     and coalesce(bool_and(
+       case
+         when jsonb_typeof(obj -> k) = 'number'
+           then (obj ->> k)::numeric = trunc((obj ->> k)::numeric)
+                and (obj ->> k)::numeric between min_value and max_value
+         else false
+       end
+     ), true)
+  from unnest(keys) as k;
+$$;
+
 -- -----------------------------------------------------------------------------
 -- profiles (ProfileRow) - one row per auth user, the root of all user data
 -- -----------------------------------------------------------------------------
@@ -119,18 +159,23 @@ create table public.profiles (
   -- Array of {day, start_time, location}; element shape is validated by Zod (TrainingSlotSchema).
   training_slots jsonb not null default '[]'
     check (jsonb_typeof(training_slots) = 'array' and jsonb_array_length(training_slots) <= 7),
-  -- PAR-Q+ answers; all seven questions plus answered_at must be present.
+  -- PAR-Q+ answers: all seven questions as booleans plus answered_at as a string.
   parq jsonb not null
     check (
-      jsonb_typeof(parq) = 'object'
-      and parq ?& array['heart_condition_or_high_blood_pressure', 'chest_pain',
-                        'dizziness_or_loss_of_consciousness', 'other_chronic_condition',
-                        'prescribed_medication_for_chronic_condition',
-                        'bone_joint_or_soft_tissue_problem',
-                        'medically_supervised_activity_only', 'answered_at']
+      private.jsonb_keys_have_type(
+        parq,
+        array['heart_condition_or_high_blood_pressure', 'chest_pain',
+              'dizziness_or_loss_of_consciousness', 'other_chronic_condition',
+              'prescribed_medication_for_chronic_condition',
+              'bone_joint_or_soft_tissue_problem', 'medically_supervised_activity_only'],
+        'boolean'
+      )
+      and private.jsonb_keys_have_type(parq, array['answered_at'], 'string')
     ),
   -- Explicit consent to process health data (GDPR Art. 9). Required, as in ProfileRow.
-  consent_health_at timestamptz not null,
+  -- Not in the future (one day of leeway for device clock skew).
+  consent_health_at timestamptz not null
+    check (consent_health_at <= now() + interval '1 day'),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   -- checkProfile: the user must offer at least days_per_week days.
@@ -254,6 +299,11 @@ create index plans_goal_id_user_id_idx on public.plans (goal_id, user_id);
 
 -- -----------------------------------------------------------------------------
 -- plan_weeks (PlanWeekRow)
+--
+-- The position keys (plan_weeks.index, planned_exercises.order, set_logs.set_index) are
+-- unique DEFERRABLE INITIALLY DEFERRED: a batch upsert that swaps two positions is checked
+-- at commit, not row by row. ON CONFLICT can't target deferrable constraints, so sync
+-- upserts must use `on conflict (id)`.
 -- -----------------------------------------------------------------------------
 
 create table public.plan_weeks (
@@ -267,6 +317,7 @@ create table public.plan_weeks (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint plan_weeks_plan_id_index_key unique (plan_id, index)
+    deferrable initially deferred
 );
 
 -- -----------------------------------------------------------------------------
@@ -317,6 +368,7 @@ create table public.planned_exercises (
     check (measure = 'seconds' or rep_max <= 300),
   -- checkPlannedSession: order is unique within a session.
   constraint planned_exercises_session_order_key unique (planned_session_id, "order")
+    deferrable initially deferred
 );
 
 create index planned_exercises_exercise_id_idx on public.planned_exercises (exercise_id);
@@ -332,11 +384,12 @@ create table public.workout_logs (
   planned_session_id uuid references public.planned_sessions (id) on delete set null,
   started_at timestamptz not null,
   ended_at timestamptz,
-  -- {sleep, energy, soreness, stress}, each 1-5 (validated by Zod PreCheckinSchema).
+  -- {sleep, energy, soreness, stress}, each an integer 1-5 (Zod PreCheckinSchema).
   pre_checkin jsonb
     check (
-      jsonb_typeof(pre_checkin) = 'object'
-      and pre_checkin ?& array['sleep', 'energy', 'soreness', 'stress']
+      private.jsonb_keys_are_ints_between(
+        pre_checkin, array['sleep', 'energy', 'soreness', 'stress'], 1, 5
+      )
     ),
   session_rpe integer check (session_rpe between 1 and 10),
   notes text check (char_length(notes) <= 1000),
@@ -374,6 +427,7 @@ create table public.set_logs (
   constraint set_logs_completed_needs_reps check (not (completed and reps = 0)),
   -- checkWorkoutLog: unique (exercise_id, set_index) within a workout.
   constraint set_logs_workout_exercise_set_key unique (workout_log_id, exercise_id, set_index)
+    deferrable initially deferred
 );
 
 -- Personal records and progression look up history per exercise.
@@ -392,6 +446,9 @@ create table public.schedule_changes (
   reason text not null check (char_length(btrim(reason)) >= 1 and char_length(reason) <= 500),
   from_date date not null,
   to_date date,
+  -- CASCADE, not SET NULL: a merge record without its target is meaningless, SET NULL
+  -- would violate schedule_changes_merge_needs_other_session, and sessions are only
+  -- deleted together with their plan (which removes its schedule changes anyway).
   merged_into_session_id uuid references public.planned_sessions (id) on delete cascade,
   new_est_minutes integer check (new_est_minutes between 1 and 240),
   created_by text not null check (created_by in ('user', 'system')),
@@ -417,139 +474,37 @@ create index schedule_changes_merged_into_session_id_idx
   on public.schedule_changes (merged_into_session_id);
 
 -- -----------------------------------------------------------------------------
--- updated_at triggers
+-- updated_at triggers (INSERT and UPDATE: the server always owns updated_at)
 -- -----------------------------------------------------------------------------
 
-create trigger profiles_set_updated_at before update on public.profiles
+create trigger profiles_set_updated_at before insert or update on public.profiles
   for each row execute function private.set_updated_at();
-create trigger goals_set_updated_at before update on public.goals
+create trigger goals_set_updated_at before insert or update on public.goals
   for each row execute function private.set_updated_at();
-create trigger exercises_set_updated_at before update on public.exercises
+create trigger exercises_set_updated_at before insert or update on public.exercises
   for each row execute function private.set_updated_at();
-create trigger plans_set_updated_at before update on public.plans
+create trigger plans_set_updated_at before insert or update on public.plans
   for each row execute function private.set_updated_at();
-create trigger plan_weeks_set_updated_at before update on public.plan_weeks
+create trigger plan_weeks_set_updated_at before insert or update on public.plan_weeks
   for each row execute function private.set_updated_at();
-create trigger planned_sessions_set_updated_at before update on public.planned_sessions
+create trigger planned_sessions_set_updated_at before insert or update on public.planned_sessions
   for each row execute function private.set_updated_at();
-create trigger planned_exercises_set_updated_at before update on public.planned_exercises
+create trigger planned_exercises_set_updated_at before insert or update on public.planned_exercises
   for each row execute function private.set_updated_at();
-create trigger workout_logs_set_updated_at before update on public.workout_logs
+create trigger workout_logs_set_updated_at before insert or update on public.workout_logs
   for each row execute function private.set_updated_at();
-create trigger set_logs_set_updated_at before update on public.set_logs
+create trigger set_logs_set_updated_at before insert or update on public.set_logs
   for each row execute function private.set_updated_at();
-create trigger schedule_changes_set_updated_at before update on public.schedule_changes
+create trigger schedule_changes_set_updated_at before insert or update on public.schedule_changes
   for each row execute function private.set_updated_at();
 
--- -----------------------------------------------------------------------------
--- Ownership helpers for child-table policies
---
--- SECURITY INVOKER: they read parent tables through the caller's own RLS and also
--- compare user_id with auth.uid() explicitly (defense in depth). `(select auth.uid())`
--- lets the planner evaluate auth.uid() once per statement.
--- -----------------------------------------------------------------------------
-
-create function private.owns_plan(p_plan_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1 from public.plans p
-    where p.id = p_plan_id and p.user_id = (select auth.uid())
-  );
-$$;
-
-create function private.owns_plan_week(p_plan_week_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.plan_weeks w
-    join public.plans p on p.id = w.plan_id
-    where w.id = p_plan_week_id and p.user_id = (select auth.uid())
-  );
-$$;
-
-create function private.owns_planned_session(p_planned_session_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.planned_sessions s
-    join public.plan_weeks w on w.id = s.plan_week_id
-    join public.plans p on p.id = w.plan_id
-    where s.id = p_planned_session_id and p.user_id = (select auth.uid())
-  );
-$$;
-
-create function private.owns_planned_exercise(p_planned_exercise_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.planned_exercises e
-    join public.planned_sessions s on s.id = e.planned_session_id
-    join public.plan_weeks w on w.id = s.plan_week_id
-    join public.plans p on p.id = w.plan_id
-    where e.id = p_planned_exercise_id and p.user_id = (select auth.uid())
-  );
-$$;
-
-create function private.owns_workout_log(p_workout_log_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1 from public.workout_logs l
-    where l.id = p_workout_log_id and l.user_id = (select auth.uid())
-  );
-$$;
-
--- True when the session belongs to the given plan (and the caller owns that plan).
-create function private.session_in_own_plan(p_planned_session_id uuid, p_plan_id uuid)
-returns boolean
-language sql
-stable
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.planned_sessions s
-    join public.plan_weeks w on w.id = s.plan_week_id
-    join public.plans p on p.id = w.plan_id
-    where s.id = p_planned_session_id
-      and w.plan_id = p_plan_id
-      and p.user_id = (select auth.uid())
-  );
-$$;
-
-revoke all on all functions in schema private from public;
-grant execute on function
-  private.owns_plan(uuid),
-  private.owns_plan_week(uuid),
-  private.owns_planned_session(uuid),
-  private.owns_planned_exercise(uuid),
-  private.owns_workout_log(uuid),
-  private.session_in_own_plan(uuid, uuid)
-  to authenticated;
 -- CHECK constraints call these as the writing role, so writers need EXECUTE.
 grant execute on function
   private.is_unique_array(text[]),
   private.all_match(text[], text),
-  private.all_lengths_between(text[], int, int)
+  private.all_lengths_between(text[], int, int),
+  private.jsonb_keys_have_type(jsonb, text[], text),
+  private.jsonb_keys_are_ints_between(jsonb, text[], int, int)
   to authenticated, service_role;
 
 -- -----------------------------------------------------------------------------
@@ -629,106 +584,263 @@ create policy plans_update_own on public.plans
 create policy plans_delete_own on public.plans
   for delete to authenticated using (user_id = (select auth.uid()));
 
+-- Child tables: ownership through the parent chain, written as
+-- `fk = any (array(select id from parent where ...))`. Postgres evaluates the subquery
+-- once per statement (InitPlan) and uses the result as an index condition on the FK
+-- index; `fk = any (array(select ...))` would also run once (hashed SubPlan) but only as a filter
+-- over a sequential scan of the child table. No function is called per row.
+-- The parent tables' own RLS also applies inside these subqueries.
+-- The same-plan checks on schedule_changes compare (session, plan) pairs, so they stay
+-- uncorrelated as well.
+
 -- plan_weeks: owned through plans
 create policy plan_weeks_select_own on public.plan_weeks
-  for select to authenticated using (private.owns_plan(plan_id));
+  for select to authenticated using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 create policy plan_weeks_insert_own on public.plan_weeks
-  for insert to authenticated with check (private.owns_plan(plan_id));
+  for insert to authenticated with check (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 create policy plan_weeks_update_own on public.plan_weeks
   for update to authenticated
-  using (private.owns_plan(plan_id))
-  with check (private.owns_plan(plan_id));
+  using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  )
+  with check (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 create policy plan_weeks_delete_own on public.plan_weeks
-  for delete to authenticated using (private.owns_plan(plan_id));
+  for delete to authenticated using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 
 -- planned_sessions: owned through plan_weeks -> plans
 create policy planned_sessions_select_own on public.planned_sessions
-  for select to authenticated using (private.owns_plan_week(plan_week_id));
+  for select to authenticated using (
+    plan_week_id = any (array(
+      select w.id from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    ))
+  );
 create policy planned_sessions_insert_own on public.planned_sessions
-  for insert to authenticated with check (private.owns_plan_week(plan_week_id));
+  for insert to authenticated with check (
+    plan_week_id = any (array(
+      select w.id from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    ))
+  );
 create policy planned_sessions_update_own on public.planned_sessions
   for update to authenticated
-  using (private.owns_plan_week(plan_week_id))
-  with check (private.owns_plan_week(plan_week_id));
+  using (
+    plan_week_id = any (array(
+      select w.id from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    ))
+  )
+  with check (
+    plan_week_id = any (array(
+      select w.id from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    ))
+  );
 create policy planned_sessions_delete_own on public.planned_sessions
-  for delete to authenticated using (private.owns_plan_week(plan_week_id));
+  for delete to authenticated using (
+    plan_week_id = any (array(
+      select w.id from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    ))
+  );
 
 -- planned_exercises: owned through planned_sessions -> plan_weeks -> plans
 create policy planned_exercises_select_own on public.planned_exercises
-  for select to authenticated using (private.owns_planned_session(planned_session_id));
+  for select to authenticated using (
+    planned_session_id = any (array(
+      select s.id from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
+    ))
+  );
 create policy planned_exercises_insert_own on public.planned_exercises
-  for insert to authenticated with check (private.owns_planned_session(planned_session_id));
+  for insert to authenticated with check (
+    planned_session_id = any (array(
+      select s.id from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
+    ))
+  );
 create policy planned_exercises_update_own on public.planned_exercises
   for update to authenticated
-  using (private.owns_planned_session(planned_session_id))
-  with check (private.owns_planned_session(planned_session_id));
+  using (
+    planned_session_id = any (array(
+      select s.id from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
+    ))
+  )
+  with check (
+    planned_session_id = any (array(
+      select s.id from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
+    ))
+  );
 create policy planned_exercises_delete_own on public.planned_exercises
-  for delete to authenticated using (private.owns_planned_session(planned_session_id));
+  for delete to authenticated using (
+    planned_session_id = any (array(
+      select s.id from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
+    ))
+  );
 
 -- workout_logs: own user_id; a linked planned session must also be the user's
 create policy workout_logs_select_own on public.workout_logs
-  for select to authenticated using (user_id = (select auth.uid()));
-create policy workout_logs_insert_own on public.workout_logs
-  for insert to authenticated
-  with check (
+  for select to authenticated using (
     user_id = (select auth.uid())
-    and (planned_session_id is null or private.owns_planned_session(planned_session_id))
+  );
+create policy workout_logs_insert_own on public.workout_logs
+  for insert to authenticated with check (
+    user_id = (select auth.uid())
+    and (
+      planned_session_id is null
+      or planned_session_id = any (array(
+        select s.id from public.planned_sessions s
+        where s.plan_week_id = any (array(
+          select w.id from public.plan_weeks w
+          where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+        ))
+      ))
+    )
   );
 create policy workout_logs_update_own on public.workout_logs
   for update to authenticated
-  using (user_id = (select auth.uid()))
+  using (
+    user_id = (select auth.uid())
+  )
   with check (
     user_id = (select auth.uid())
-    and (planned_session_id is null or private.owns_planned_session(planned_session_id))
+    and (
+      planned_session_id is null
+      or planned_session_id = any (array(
+        select s.id from public.planned_sessions s
+        where s.plan_week_id = any (array(
+          select w.id from public.plan_weeks w
+          where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+        ))
+      ))
+    )
   );
 create policy workout_logs_delete_own on public.workout_logs
-  for delete to authenticated using (user_id = (select auth.uid()));
+  for delete to authenticated using (
+    user_id = (select auth.uid())
+  );
 
 -- set_logs: owned through workout_logs; a linked prescription must also be the user's
 create policy set_logs_select_own on public.set_logs
-  for select to authenticated using (private.owns_workout_log(workout_log_id));
+  for select to authenticated using (
+    workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
+  );
 create policy set_logs_insert_own on public.set_logs
-  for insert to authenticated
-  with check (
-    private.owns_workout_log(workout_log_id)
-    and (planned_exercise_id is null or private.owns_planned_exercise(planned_exercise_id))
+  for insert to authenticated with check (
+    workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
+    and (
+      planned_exercise_id is null
+      or planned_exercise_id = any (array(
+        select e.id from public.planned_exercises e
+        where e.planned_session_id = any (array(
+          select s.id from public.planned_sessions s
+          where s.plan_week_id = any (array(
+            select w.id from public.plan_weeks w
+            where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+          ))
+        ))
+      ))
+    )
   );
 create policy set_logs_update_own on public.set_logs
   for update to authenticated
-  using (private.owns_workout_log(workout_log_id))
+  using (
+    workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
+  )
   with check (
-    private.owns_workout_log(workout_log_id)
-    and (planned_exercise_id is null or private.owns_planned_exercise(planned_exercise_id))
+    workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
+    and (
+      planned_exercise_id is null
+      or planned_exercise_id = any (array(
+        select e.id from public.planned_exercises e
+        where e.planned_session_id = any (array(
+          select s.id from public.planned_sessions s
+          where s.plan_week_id = any (array(
+            select w.id from public.plan_weeks w
+            where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+          ))
+        ))
+      ))
+    )
   );
 create policy set_logs_delete_own on public.set_logs
-  for delete to authenticated using (private.owns_workout_log(workout_log_id));
+  for delete to authenticated using (
+    workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
+  );
 
 -- schedule_changes: owned through plans; referenced sessions must be in that plan
 create policy schedule_changes_select_own on public.schedule_changes
-  for select to authenticated using (private.owns_plan(plan_id));
+  for select to authenticated using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 create policy schedule_changes_insert_own on public.schedule_changes
-  for insert to authenticated
-  with check (
-    private.owns_plan(plan_id)
-    and private.session_in_own_plan(planned_session_id, plan_id)
+  for insert to authenticated with check (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    and (planned_session_id, plan_id) in (
+      select s.id, w.plan_id from public.planned_sessions s
+      join public.plan_weeks w on w.id = s.plan_week_id
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    )
     and (
       merged_into_session_id is null
-      or private.session_in_own_plan(merged_into_session_id, plan_id)
+      or (merged_into_session_id, plan_id) in (
+        select s.id, w.plan_id from public.planned_sessions s
+        join public.plan_weeks w on w.id = s.plan_week_id
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      )
     )
   );
 create policy schedule_changes_update_own on public.schedule_changes
   for update to authenticated
-  using (private.owns_plan(plan_id))
+  using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  )
   with check (
-    private.owns_plan(plan_id)
-    and private.session_in_own_plan(planned_session_id, plan_id)
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    and (planned_session_id, plan_id) in (
+      select s.id, w.plan_id from public.planned_sessions s
+      join public.plan_weeks w on w.id = s.plan_week_id
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+    )
     and (
       merged_into_session_id is null
-      or private.session_in_own_plan(merged_into_session_id, plan_id)
+      or (merged_into_session_id, plan_id) in (
+        select s.id, w.plan_id from public.planned_sessions s
+        join public.plan_weeks w on w.id = s.plan_week_id
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      )
     )
   );
 create policy schedule_changes_delete_own on public.schedule_changes
-  for delete to authenticated using (private.owns_plan(plan_id));
+  for delete to authenticated using (
+    plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+  );
 
 -- -----------------------------------------------------------------------------
 -- GDPR: data export (Art. 15/20) and account deletion (Art. 17)
@@ -761,15 +873,25 @@ as $$
     ), '[]'::jsonb),
     'plan_weeks', coalesce((
       select jsonb_agg(to_jsonb(w) order by w.plan_id, w.index)
-      from public.plan_weeks w where private.owns_plan(w.plan_id)
+      from public.plan_weeks w
+      where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
     ), '[]'::jsonb),
     'planned_sessions', coalesce((
       select jsonb_agg(to_jsonb(s) order by s.scheduled_date, s.id)
-      from public.planned_sessions s where private.owns_plan_week(s.plan_week_id)
+      from public.planned_sessions s
+      where s.plan_week_id = any (array(
+        select w.id from public.plan_weeks w
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
     ), '[]'::jsonb),
     'planned_exercises', coalesce((
       select jsonb_agg(to_jsonb(e) order by e.planned_session_id, e."order")
-      from public.planned_exercises e where private.owns_planned_session(e.planned_session_id)
+      from public.planned_exercises e
+      where e.planned_session_id = any (array(
+        select s.id from public.planned_sessions s
+        join public.plan_weeks w on w.id = s.plan_week_id
+        where w.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
+      ))
     ), '[]'::jsonb),
     'workout_logs', coalesce((
       select jsonb_agg(to_jsonb(l) order by l.started_at, l.id)
@@ -777,11 +899,13 @@ as $$
     ), '[]'::jsonb),
     'set_logs', coalesce((
       select jsonb_agg(to_jsonb(s) order by s.performed_at, s.id)
-      from public.set_logs s where private.owns_workout_log(s.workout_log_id)
+      from public.set_logs s
+      where s.workout_log_id = any (array(select l.id from public.workout_logs l where l.user_id = (select auth.uid())))
     ), '[]'::jsonb),
     'schedule_changes', coalesce((
       select jsonb_agg(to_jsonb(c) order by c.created_at, c.id)
-      from public.schedule_changes c where private.owns_plan(c.plan_id)
+      from public.schedule_changes c
+      where c.plan_id = any (array(select p.id from public.plans p where p.user_id = (select auth.uid())))
     ), '[]'::jsonb)
   );
 $$;

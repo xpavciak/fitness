@@ -57,23 +57,29 @@ function renderSeed(catalog: readonly ExerciseRow[]): string {
   const rows = [...catalog]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     .map((exercise) => `  (${COLUMNS.map((column) => sqlValue(exercise[column])).join(', ')})`);
-  const updates = COLUMNS.filter((column) => column !== 'id').map(
-    (column) => `  ${column} = excluded.${column}`,
-  );
+  const dataColumns = COLUMNS.filter((column) => column !== 'id');
+  const updates = dataColumns.map((column) => `  ${column} = excluded.${column}`);
   return [
     '-- GENERATED FILE, DO NOT EDIT.',
     '-- Source: packages/engine/src/catalog (EXERCISE_CATALOG).',
     '-- Regenerate with `pnpm db:seed`; `pnpm db:verify` fails if this file is stale.',
     '--',
     `-- ${String(catalog.length)} exercises, sorted by id.`,
-    '-- Idempotent upsert: safe to re-run on an existing database. Catalog rows removed from',
-    '-- the engine are NOT deleted here (logs may reference them); retire them in a migration.',
+    '-- Idempotent upsert: safe to re-run on an existing database. Unchanged rows are not',
+    '-- rewritten (updated_at stays put, so clients do not re-pull the whole catalog).',
+    '-- Catalog rows removed from the engine are NOT deleted here (logs may reference them);',
+    '-- retire them in a migration.',
     '',
     `insert into public.exercises (${COLUMNS.join(', ')})`,
     'values',
     rows.join(',\n'),
     'on conflict (id) do update set',
-    `${updates.join(',\n')};`,
+    updates.join(',\n'),
+    'where (',
+    dataColumns.map((column) => `  exercises.${column}`).join(',\n'),
+    ') is distinct from (',
+    dataColumns.map((column) => `  excluded.${column}`).join(',\n'),
+    ');',
     '',
   ].join('\n');
 }

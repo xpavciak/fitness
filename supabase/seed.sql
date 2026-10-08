@@ -3,8 +3,10 @@
 -- Regenerate with `pnpm db:seed`; `pnpm db:verify` fails if this file is stale.
 --
 -- 119 exercises, sorted by id.
--- Idempotent upsert: safe to re-run on an existing database. Catalog rows removed from
--- the engine are NOT deleted here (logs may reference them); retire them in a migration.
+-- Idempotent upsert: safe to re-run on an existing database. Unchanged rows are not
+-- rewritten (updated_at stays put, so clients do not re-pull the whole catalog).
+-- Catalog rows removed from the engine are NOT deleted here (logs may reference them);
+-- retire them in a migration.
 
 insert into public.exercises (id, name, pattern, primary_muscles, secondary_muscles, equipment, level, contraindication_tags, substitutes, cues, measure, loadable, unilateral, low_stimulus)
 values
@@ -140,4 +142,33 @@ on conflict (id) do update set
   measure = excluded.measure,
   loadable = excluded.loadable,
   unilateral = excluded.unilateral,
-  low_stimulus = excluded.low_stimulus;
+  low_stimulus = excluded.low_stimulus
+where (
+  exercises.name,
+  exercises.pattern,
+  exercises.primary_muscles,
+  exercises.secondary_muscles,
+  exercises.equipment,
+  exercises.level,
+  exercises.contraindication_tags,
+  exercises.substitutes,
+  exercises.cues,
+  exercises.measure,
+  exercises.loadable,
+  exercises.unilateral,
+  exercises.low_stimulus
+) is distinct from (
+  excluded.name,
+  excluded.pattern,
+  excluded.primary_muscles,
+  excluded.secondary_muscles,
+  excluded.equipment,
+  excluded.level,
+  excluded.contraindication_tags,
+  excluded.substitutes,
+  excluded.cues,
+  excluded.measure,
+  excluded.loadable,
+  excluded.unilateral,
+  excluded.low_stimulus
+);

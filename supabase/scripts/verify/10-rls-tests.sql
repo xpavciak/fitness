@@ -33,7 +33,8 @@ returns void
 language sql
 as $$ select nextval('rls_test.assertions') $$;
 
--- Asserts that `sql` fails with SQLSTATE `expected_state`.
+-- Asserts that `sql` fails with SQLSTATE `expected_state`. Deferred constraints are forced
+-- to fire inside the block (as they would at commit), so their violations are caught too.
 create function rls_test.expect_error(sql text, expected_state text, label text)
 returns void
 language plpgsql
@@ -43,6 +44,7 @@ declare
 begin
   begin
     execute sql;
+    set constraints all immediate;
     succeeded := true;
   exception when others then
     if sqlstate <> expected_state then
@@ -404,6 +406,55 @@ select rls_test.expect_count(
 select rls_test.expect_affected(
   $q$update public.set_logs set rir = 1$q$, 1, 'A updates own set');
 
+-- The server also owns updated_at on INSERT (sync pulls rely on server arrival time).
+insert into public.goals (id, user_id, type, status, updated_at)
+values (rls_test.id('a', 20), auth.uid(), 'general', 'active', '2000-01-01');
+select rls_test.expect_count(format(
+  $q$select 1 from public.goals where id = %L and updated_at > '2001-01-01'$q$,
+  rls_test.id('a', 20)), 1, 'updated_at trigger overrides the client value on insert');
+delete from public.goals where id = rls_test.id('a', 20);
+
+-- Position keys are deferrable: one batch upsert may swap two positions.
+insert into public.planned_exercises (id, planned_session_id, exercise_id, "order", sets,
+                                      measure, rep_min, rep_max, target_rir, rest_sec, is_key)
+values (rls_test.id('a', 10), rls_test.id('a', 4), 'push_up', 1, 3, 'reps', 8, 12, 2, 60, false);
+select rls_test.expect_affected(format(
+  $q$insert into public.planned_exercises (id, planned_session_id, exercise_id, "order", sets,
+       measure, rep_min, rep_max, target_rir, target_load_kg, rest_sec, is_key)
+     values (%L, %L, 'goblet_squat', 1, 3, 'reps', 8, 12, 2, 16, 90, true),
+            (%L, %L, 'push_up', 0, 3, 'reps', 8, 12, 2, null, 60, false)
+     on conflict (id) do update set "order" = excluded."order"$q$,
+  rls_test.id('a', 6), rls_test.id('a', 4), rls_test.id('a', 10), rls_test.id('a', 4)),
+  2, 'batch upsert swaps planned exercise order');
+select rls_test.expect_count(format(
+  $q$select 1 from public.planned_exercises
+     where (id = %L and "order" = 1) or (id = %L and "order" = 0)$q$,
+  rls_test.id('a', 6), rls_test.id('a', 10)), 2, 'planned exercise order swapped');
+
+insert into public.set_logs (id, workout_log_id, exercise_id, set_index, measure, reps, load_kg,
+                             is_warmup, completed, performed_at)
+values (rls_test.id('a', 11), rls_test.id('a', 7), 'goblet_squat', 1, 'reps', 9, 16, false, true,
+        '2026-10-05T07:13:00Z');
+select rls_test.expect_affected(format(
+  $q$insert into public.set_logs (id, workout_log_id, exercise_id, set_index, measure, reps,
+       load_kg, is_warmup, completed, performed_at)
+     values (%L, %L, 'goblet_squat', 1, 'reps', 10, 16, false, true, '2026-10-05T07:10:00Z'),
+            (%L, %L, 'goblet_squat', 0, 'reps', 9, 16, false, true, '2026-10-05T07:13:00Z')
+     on conflict (id) do update set set_index = excluded.set_index$q$,
+  rls_test.id('a', 8), rls_test.id('a', 7), rls_test.id('a', 11), rls_test.id('a', 7)),
+  2, 'batch upsert swaps set_index');
+
+-- A batch that leaves a real duplicate still fails (at commit; forced here).
+select rls_test.expect_error(format(
+  $q$update public.set_logs set set_index = 0 where id = %L$q$, rls_test.id('a', 8)),
+  '23505', 'deferred set_index duplicate fails at commit');
+
+-- Remove the extra rows so later per-table counts stay at the fixture baseline.
+delete from public.planned_exercises where id = rls_test.id('a', 10);
+delete from public.set_logs where id = rls_test.id('a', 11);
+update public.planned_exercises set "order" = 0 where id = rls_test.id('a', 6);
+update public.set_logs set set_index = 0 where id = rls_test.id('a', 8);
+
 -- ---------------------------------------------------------------------------
 -- 6. Constraints mirror the Zod schemas
 -- ---------------------------------------------------------------------------
@@ -455,6 +506,56 @@ select rls_test.expect_error(
   $q$update public.profiles set equipment = '{dumbbells,dumbbells}'$q$,
   '23514', 'duplicate equipment');
 
+-- JSON columns are type-checked: PAR-Q+ answers are booleans, check-ins integers 1-5.
+select rls_test.expect_error(
+  $q$update public.profiles set parq = jsonb_set(parq, '{chest_pain}', '"no"')$q$,
+  '23514', 'parq answer is a string');
+select rls_test.expect_error(
+  $q$update public.profiles set parq = jsonb_set(parq, '{chest_pain}', 'null')$q$,
+  '23514', 'parq answer is null');
+select rls_test.expect_error(
+  $q$update public.profiles set parq = parq - 'chest_pain'$q$,
+  '23514', 'parq answer missing');
+select rls_test.expect_error(
+  $q$update public.profiles set parq = jsonb_set(parq, '{answered_at}', '0')$q$,
+  '23514', 'parq answered_at is not a string');
+select rls_test.expect_error(
+  $q$update public.profiles set parq = '[]'$q$, '23514', 'parq is not an object');
+select rls_test.expect_affected(
+  $q$update public.profiles set parq = jsonb_set(parq, '{chest_pain}', 'true')$q$, 1,
+  'parq accepts a boolean answer');
+select rls_test.expect_error(
+  $q$update public.workout_logs
+     set pre_checkin = '{"sleep": 6, "energy": 3, "soreness": 2, "stress": 2}'$q$,
+  '23514', 'pre_checkin value above 5');
+select rls_test.expect_error(
+  $q$update public.workout_logs
+     set pre_checkin = '{"sleep": 0, "energy": 3, "soreness": 2, "stress": 2}'$q$,
+  '23514', 'pre_checkin value below 1');
+select rls_test.expect_error(
+  $q$update public.workout_logs
+     set pre_checkin = '{"sleep": 2.5, "energy": 3, "soreness": 2, "stress": 2}'$q$,
+  '23514', 'pre_checkin value not an integer');
+select rls_test.expect_error(
+  $q$update public.workout_logs
+     set pre_checkin = '{"sleep": "3", "energy": 3, "soreness": 2, "stress": 2}'$q$,
+  '23514', 'pre_checkin value is a string');
+select rls_test.expect_error(
+  $q$update public.workout_logs set pre_checkin = '{"sleep": 3, "energy": 3, "soreness": 2}'$q$,
+  '23514', 'pre_checkin key missing');
+select rls_test.expect_affected(
+  $q$update public.workout_logs
+     set pre_checkin = '{"sleep": 1, "energy": 5, "soreness": 3, "stress": 4.0}'$q$, 1,
+  'pre_checkin accepts integers 1-5');
+
+-- Consent can't be dated in the future (beyond one day of clock-skew leeway).
+select rls_test.expect_error(
+  $q$update public.profiles set consent_health_at = now() + interval '2 days'$q$,
+  '23514', 'consent_health_at in the future');
+select rls_test.expect_affected(
+  $q$update public.profiles set consent_health_at = now() + interval '12 hours'$q$, 1,
+  'consent_health_at within the clock-skew leeway');
+
 -- Consent is mandatory: C cannot create a profile without consent_health_at.
 select set_config('request.jwt.claim.sub', :uid_c, false) \g /dev/null
 select rls_test.expect_error(
@@ -490,6 +591,8 @@ from unnest(array['profiles', 'goals', 'exercises', 'plans', 'plan_weeks', 'plan
                   'planned_exercises', 'workout_logs', 'set_logs', 'schedule_changes']) as t;
 select rls_test.expect_error('select public.export_my_data()', '42501', 'anon exports');
 select rls_test.expect_error('select public.delete_my_account()', '42501', 'anon deletes an account');
+select rls_test.expect_error($q$select private.is_unique_array('{a}')$q$, '42501',
+  'anon calls a private helper');
 reset role;
 
 -- ---------------------------------------------------------------------------
