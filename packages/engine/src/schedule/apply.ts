@@ -46,7 +46,7 @@ export function applyScheduleChanges(
 ): Plan {
   const catalog = opts.catalog ?? EXERCISE_CATALOG;
   const validators = createCatalogValidators(catalog);
-  const next = structuredClone(validators.Plan.parse(plan));
+  const next = clonePlain(validators.Plan.parse(plan));
   for (const input of changes) {
     const change = ScheduleChangeSchema.parse(input);
     if (change.plan_id !== next.id) {
@@ -128,9 +128,9 @@ export function replacePlannedSession(
   catalog: readonly Exercise[] = EXERCISE_CATALOG,
 ): Plan {
   const validators = createCatalogValidators(catalog);
-  const next = structuredClone(validators.Plan.parse(plan));
+  const next = clonePlain(validators.Plan.parse(plan));
   const { week, index } = findSession(next, session.id);
-  week.sessions[index] = structuredClone(session);
+  week.sessions[index] = clonePlain(session);
   return validators.Plan.parse(next);
 }
 
@@ -155,4 +155,12 @@ function required<T>(value: T | undefined, field: string): T {
     throw new Error(`${field} is required`);
   }
   return value;
+}
+
+/**
+ * Deep copy of plain JSON data (plans and sessions contain only strings, numbers, booleans,
+ * arrays and objects). `structuredClone` is not part of the ES2022 library this package targets.
+ */
+function clonePlain<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

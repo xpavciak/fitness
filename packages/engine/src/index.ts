@@ -19,3 +19,5 @@ export * from './progression/one-rep-max.js';
 export * from './schedule/session-variants.js';
 export * from './schedule/reschedule.js';
 export * from './schedule/apply.js';
+// Feature D: adherence and weekly streaks (T7)
+export * from './adherence/adherence.js';

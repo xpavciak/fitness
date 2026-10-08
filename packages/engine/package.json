@@ -2,7 +2,7 @@
   "name": "@fitness/engine",
   "version": "0.1.0",
   "private": true,
-  "description": "Pure TypeScript planning engine: domain schemas, exercise catalog and (later) plan generation, progression and rescheduling.",
+  "description": "Pure TypeScript planning engine: domain schemas, exercise catalog, plan generation, progression, rescheduling and adherence.",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
