@@ -56,7 +56,11 @@ function workout(
 }
 
 const run = (pe: PlannedExercise, sets: SetLog[]) =>
-  nextTargets(pe, sets, { today: TODAY, timezone: 'Europe/Bratislava' });
+  nextTargets(pe, sets, {
+    today: TODAY,
+    timezone: 'Europe/Bratislava',
+    experienceLevel: 'intermediate',
+  });
 
 describe('QA batch 2: nextTargets hand-computed cases', () => {
   it.each([

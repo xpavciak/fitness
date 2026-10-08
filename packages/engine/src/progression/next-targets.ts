@@ -3,12 +3,14 @@ import { createCatalogLookup } from '../catalog/lookup.js';
 import { addDays, daysBetween, isValidTimeZone, localDateOf } from '../dates.js';
 import { loadStepsFor, roundLoad, type LoadSteps } from '../loads.js';
 import {
+  EXPERIENCE_LEVELS,
   IsoDateSchema,
   PlannedExerciseSchema,
   SetLogSchema,
   maxPerSet,
   type Exercise,
   type ExerciseMeasure,
+  type ExperienceLevel,
   type IsoDate,
   type PlannedExercise,
   type SetLog,
@@ -28,6 +30,8 @@ export const RIR_TOO_EASY_MARGIN = 2;
 export const RIR_TOO_HARD_MARGIN = 2;
 /** RIR this far below the target means much too hard: the load drops 5% (B1). */
 export const RIR_MUCH_TOO_HARD_MARGIN = 3;
+/** Beginners hold load and reps whenever a reported RIR is below this (no grinding reps). */
+export const BEGINNER_MIN_RIR = 3;
 /** Timed exercises progress in steps of this many seconds (reps-based ones by 1 rep). */
 export const DURATION_STEP_SEC = 5;
 
@@ -36,6 +40,8 @@ export interface NextTargetsOptions {
   today: IsoDate;
   /** The profile's IANA zone, used to turn `performed_at` into a local date (required, S2). */
   timezone: string;
+  /** The profile's experience level (required): beginners never progress below RIR 3. */
+  experienceLevel: ExperienceLevel;
   catalog?: readonly Exercise[];
   /** Overrides the load increment and rounding grid (e.g. 2.5 kg dumbbell steps). */
   loadStepKg?: number;
@@ -88,6 +94,8 @@ interface LastSession {
  * 4. Harder than planned (any reported RIR <= target - 2): same load, aim for the weakest set's
  *    reps again (`hold`); at 3 or more below the target the load drops 5% (`decrease_load`).
  *    Load and reps never go up in this case.
+ * 4b. Beginners (`experienceLevel`): any reported RIR below 3 holds the load and the weakest set's
+ *    reps (`hold`), even at the top of the range.
  * 5. Every planned set completed at the top of the range: double progression adds the load
  *    increment for the equipment and restarts at `rep_min` (`increase_load`). When the sets also
  *    felt too easy (every reported RIR >= target + 2) the jump is at least +5%. Without load
@@ -115,6 +123,13 @@ export function nextTargets(
 ): NextTargets {
   const planned = PlannedExerciseSchema.parse(plannedInput);
   const today = IsoDateSchema.parse(opts.today);
+  // Runtime checks for JavaScript callers and stale call sites.
+  if (typeof (opts.timezone as unknown) !== 'string' || opts.timezone === '') {
+    throw new TypeError('nextTargets: opts.timezone is required (the profile IANA time zone)');
+  }
+  if (!(EXPERIENCE_LEVELS as readonly unknown[]).includes(opts.experienceLevel)) {
+    throw new TypeError('nextTargets: opts.experienceLevel is required (the profile level)');
+  }
   if (!isValidTimeZone(opts.timezone)) {
     throw new RangeError(`Unknown IANA time zone "${opts.timezone}"`);
   }
@@ -136,7 +151,7 @@ export function nextTargets(
     const effort =
       planned.measure === 'seconds'
         ? 'stopping while your form is still solid'
-        : `stopping with about ${planned.target_rir} reps in reserve`;
+        : `stopping with about ${inReserve(planned.target_rir)}`;
     return {
       ...base,
       target_reps: planned.rep_min,
@@ -195,7 +210,7 @@ export function nextTargets(
 
   if (failedOrMaxEffort) {
     const cause = allCompleted
-      ? 'You went to failure (0 reps in reserve)'
+      ? `You went to failure (${inReserve(0)})`
       : 'A set was not completed';
     const load = steps ? lowerLoad(loadKg, steps, RIR_ADJUSTMENT) : undefined;
     return result(
@@ -208,7 +223,7 @@ export function nextTargets(
 
   if (tooHard) {
     const hardest = Math.min(...reportedRir);
-    const feel = `That was harder than planned (${hardest} reps in reserve, ${target} planned)`;
+    const feel = `That was harder than planned (${inReserve(hardest)}, ${target} planned)`;
     const targetReps = clampReps(minReps);
     if (muchTooHard && steps) {
       const load = lowerLoad(loadKg, steps, RIR_ADJUSTMENT);
@@ -223,6 +238,17 @@ export function nextTargets(
       'hold',
       targetReps,
       `${feel}, so ${steps ? `keep ${formatKg(loadKg)} kg and ` : ''}aim for ${amount(targetReps)} per set again.`,
+      loadKg,
+    );
+  }
+
+  const beginnerFloor = reportedRir.filter((rir) => rir < BEGINNER_MIN_RIR);
+  if (opts.experienceLevel === 'beginner' && beginnerFloor.length > 0) {
+    const targetReps = clampReps(minReps);
+    return result(
+      'hold',
+      targetReps,
+      `As a beginner you stop each set with at least ${BEGINNER_MIN_RIR} reps in reserve, and one set had ${inReserve(Math.min(...beginnerFloor))}, so ${steps ? `keep ${formatKg(loadKg)} kg and ` : ''}aim for ${amount(targetReps)} per set again.`,
       loadKg,
     );
   }
@@ -253,7 +279,7 @@ export function nextTargets(
   }
 
   if (tooEasy) {
-    const easy = `That felt easy (${target + RIR_TOO_EASY_MARGIN}+ reps in reserve)`;
+    const easy = `That felt easy (${target + RIR_TOO_EASY_MARGIN}+ reps in reserve)`; // always plural
     if (steps) {
       const load = roundLoad(loadKg * (1 + RIR_ADJUSTMENT), steps, 'up');
       return result(
@@ -287,6 +313,11 @@ export function nextTargets(
 
 function loadField(exercise: Exercise, loadKg: number | undefined): { target_load_kg?: number } {
   return exercise.loadable && loadKg !== undefined ? { target_load_kg: loadKg } : {};
+}
+
+/** "1 rep in reserve", "2 reps in reserve". */
+function inReserve(rir: number): string {
+  return `${rir} rep${rir === 1 ? '' : 's'} in reserve`;
 }
 
 function formatKg(kg: number): string {

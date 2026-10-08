@@ -332,7 +332,11 @@ describe('nextTargets (table-driven)', () => {
   ];
 
   it.each(cases)('%s', (_name, plannedExercise, logs, expected) => {
-    const result = nextTargets(plannedExercise, logs, { today: TODAY, timezone: 'UTC' });
+    const result = nextTargets(plannedExercise, logs, {
+      today: TODAY,
+      timezone: 'UTC',
+      experienceLevel: 'intermediate',
+    });
     for (const [key, value] of Object.entries(expected)) {
       expect(result[key as keyof NextTargets], key).toEqual(value);
     }
@@ -348,6 +352,7 @@ describe('nextTargets details', () => {
     const result = nextTargets(planned(), [...older, ...newer, ...other], {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
     });
     expect(result.decision).toBe('increase_load');
     expect(result.last_session_date).toBe('2026-10-05');
@@ -359,11 +364,19 @@ describe('nextTargets details', () => {
       ...set,
       performed_at: '2026-09-23T23:30:00Z',
     }));
-    expect(nextTargets(planned(), logs, { today: TODAY, timezone: 'UTC' }).decision).toBe(
-      'break_reset',
-    );
     expect(
-      nextTargets(planned(), logs, { today: TODAY, timezone: 'Europe/Bratislava' }).decision,
+      nextTargets(planned(), logs, {
+        today: TODAY,
+        timezone: 'UTC',
+        experienceLevel: 'intermediate',
+      }).decision,
+    ).toBe('break_reset');
+    expect(
+      nextTargets(planned(), logs, {
+        today: TODAY,
+        timezone: 'Europe/Bratislava',
+        experienceLevel: 'intermediate',
+      }).decision,
     ).toBe('add_reps');
   });
 
@@ -373,12 +386,14 @@ describe('nextTargets details', () => {
     const result = nextTargets(planned(), [...session(sets3(9, 2)), ...future], {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
     });
     expect(result.last_session_date).toBe('2026-10-05');
     expect(result.decision).toBe('add_reps');
     const withTomorrow = nextTargets(planned(), [...future, ...tomorrow], {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
     });
     expect(withTomorrow).toMatchObject({
       last_session_date: '2026-10-09',
@@ -386,25 +401,83 @@ describe('nextTargets details', () => {
     });
   });
 
-  it('S2: requires a valid time zone', () => {
-    expect(() => nextTargets(planned(), [], { today: TODAY, timezone: 'Nowhere/City' })).toThrow(
-      RangeError,
+  it('S2: requires a valid time zone and the experience level, with clear errors', () => {
+    expect(() =>
+      nextTargets(planned(), [], {
+        today: TODAY,
+        timezone: 'Nowhere/City',
+        experienceLevel: 'beginner',
+      }),
+    ).toThrow(RangeError);
+    expect(() =>
+      nextTargets(planned(), [], { today: TODAY, experienceLevel: 'beginner' } as never),
+    ).toThrow('nextTargets: opts.timezone is required (the profile IANA time zone)');
+    expect(() => nextTargets(planned(), [], { today: TODAY, timezone: 'UTC' } as never)).toThrow(
+      'nextTargets: opts.experienceLevel is required',
     );
+  });
+
+  it.each([
+    // [label, target RIR, sets, expected decision, load, target reps]
+    ['beginner 3x12 at RIR 2 (target 3): hold, no increase', 3, sets3(12, 2), 'hold', 12, 12],
+    ['beginner 3x10 at RIR 2 (target 3): hold, no extra rep', 3, sets3(10, 2), 'hold', 12, 10],
+    ['beginner 3x12 at RIR 3 (target 3): normal increase', 3, sets3(12, 3), 'increase_load', 14, 8],
+    ['beginner 3x12 without RIR: normal increase', 3, sets3(12, undefined), 'increase_load', 14, 8],
+    [
+      'beginner RIR 1 with target 4: the -5% rule still applies',
+      4,
+      sets3(12, 1),
+      'decrease_load',
+      10,
+      12,
+    ],
+  ] as const)('%s', (_label, targetRir, specs, decision, load, reps) => {
+    const result = nextTargets(planned({ target_rir: targetRir }), session(specs), {
+      today: TODAY,
+      timezone: 'UTC',
+      experienceLevel: 'beginner',
+    });
+    expect([result.decision, result.target_load_kg, result.target_reps]).toEqual([
+      decision,
+      load,
+      reps,
+    ]);
+    if (decision === 'hold') {
+      expect(result.reason).toMatch(
+        /^As a beginner you stop each set with at least 3 reps in reserve, and one set had 2 reps in reserve/,
+      );
+    }
+  });
+
+  it('uses "1 rep in reserve" (singular)', () => {
+    const result = nextTargets(planned({ target_rir: 3 }), session(sets3(9, 1)), {
+      today: TODAY,
+      timezone: 'UTC',
+      experienceLevel: 'intermediate',
+    });
+    expect(result.reason).toContain('(1 rep in reserve, 3 planned)');
+    const beginner = nextTargets(planned({ target_rir: 2 }), session(sets3(9, 1)), {
+      today: TODAY,
+      timezone: 'UTC',
+      experienceLevel: 'beginner',
+    });
+    expect(beginner.reason).toContain('one set had 1 rep in reserve');
   });
 
   it('reasons state the actual kg change and never mention weight without load', () => {
     const kettlebell = nextTargets(
       planned({ exercise_id: 'kettlebell_goblet_squat' }),
       session([{ reps: 5, load: 16, completed: false }], { exercise: 'kettlebell_goblet_squat' }),
-      { today: TODAY, timezone: 'UTC' },
+      { today: TODAY, timezone: 'UTC', experienceLevel: 'intermediate' },
     );
     expect(kettlebell.target_load_kg).toBe(12);
     expect(kettlebell.reason).toContain('drops from 16 to 12 kg (25% lighter');
     const harder = nextTargets(planned({ target_rir: 3 }), session(sets3(9, 1)), {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
     });
-    expect(harder.reason).toMatch(/harder than planned \(1 reps in reserve, 3 planned\)/);
+    expect(harder.reason).toMatch(/harder than planned \(1 rep in reserve, 3 planned\)/);
     const unloadedCases = [
       session(sets3(10, 2, 0), { exercise: 'push_up' }),
       session(sets3(6, 2, 0), { exercise: 'push_up' }),
@@ -415,6 +488,7 @@ describe('nextTargets details', () => {
       const result = nextTargets(unloaded({ exercise_id: 'push_up' }), logs, {
         today: TODAY,
         timezone: 'UTC',
+        experienceLevel: 'intermediate',
       });
       expect(result.reason).not.toMatch(/weight|kg/);
     }
@@ -424,6 +498,7 @@ describe('nextTargets details', () => {
     const result = nextTargets(planned(), session(sets3(12, 2, 12.5)), {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
       loadStepKg: 2.5,
     });
     expect(result.target_load_kg).toBe(15);
@@ -433,17 +508,32 @@ describe('nextTargets details', () => {
     const result = nextTargets(planned({ sets: 4, target_rir: 3 }), session(sets3(10, 3)), {
       today: TODAY,
       timezone: 'UTC',
+      experienceLevel: 'intermediate',
     });
     expect([result.sets, result.target_rir]).toEqual([4, 3]);
   });
 
   it('rejects invalid input', () => {
     expect(() =>
-      nextTargets({ ...planned(), rep_min: 0 }, [], { today: TODAY, timezone: 'UTC' }),
+      nextTargets({ ...planned(), rep_min: 0 }, [], {
+        today: TODAY,
+        timezone: 'UTC',
+        experienceLevel: 'intermediate',
+      }),
     ).toThrow();
-    expect(() => nextTargets(planned(), [], { today: '08.10.2026', timezone: 'UTC' })).toThrow();
     expect(() =>
-      nextTargets(planned({ exercise_id: 'quantum_squat' }), [], { today: TODAY, timezone: 'UTC' }),
+      nextTargets(planned(), [], {
+        today: '08.10.2026',
+        timezone: 'UTC',
+        experienceLevel: 'intermediate',
+      }),
+    ).toThrow();
+    expect(() =>
+      nextTargets(planned({ exercise_id: 'quantum_squat' }), [], {
+        today: TODAY,
+        timezone: 'UTC',
+        experienceLevel: 'intermediate',
+      }),
     ).toThrow(/Unknown exercise_id/);
   });
 });
