@@ -162,6 +162,18 @@ describe('nextTargets (table-driven)', () => {
       { decision: 'break_reset', target_load_kg: 16, target_reps: 8 },
     ],
     [
+      'break on a coarse grid rounds to the nearest step: 12 kg -20% -> 10, not 8',
+      planned(),
+      session(sets3(10, 2), { date: '2026-09-01' }),
+      { decision: 'break_reset', target_load_kg: 10 },
+    ],
+    [
+      'break still drops at least one step: 12 kg -10% -> 10',
+      planned(),
+      session(sets3(10, 2), { date: '2026-09-20' }),
+      { decision: 'break_reset', target_load_kg: 10 },
+    ],
+    [
       'barbell lower body: +5 kg after hitting the top',
       planned({ exercise_id: 'barbell_back_squat', rep_min: 5, rep_max: 8 }),
       session(sets3(8, 2, 100), { exercise: 'barbell_back_squat' }),
@@ -174,10 +186,77 @@ describe('nextTargets (table-driven)', () => {
       { decision: 'increase_load', target_load_kg: 62.5 },
     ],
     [
-      'barbell -5% rounds down to a 2.5 kg plate pair (61 -> 57.5)',
+      'off-grid barbell decrease uses the nearest step below (61 -> 60, S5)',
       planned({ exercise_id: 'barbell_bench_press', rep_min: 5, rep_max: 8 }),
       session([{ reps: 4, load: 61, completed: false }], { exercise: 'barbell_bench_press' }),
+      { decision: 'decrease_load', target_load_kg: 60 },
+    ],
+    [
+      'on-grid barbell -5% rounds down to a plate pair (62.5 -> 57.5)',
+      planned({ exercise_id: 'barbell_bench_press', rep_min: 5, rep_max: 8 }),
+      session([{ reps: 4, load: 62.5, completed: false }], { exercise: 'barbell_bench_press' }),
       { decision: 'decrease_load', target_load_kg: 57.5 },
+    ],
+    [
+      'off-grid dumbbell decrease: 12.5 -> 12, not -20% to 10 (S5)',
+      planned(),
+      session([{ reps: 5, load: 12.5, completed: false }]),
+      { decision: 'decrease_load', target_load_kg: 12 },
+    ],
+    [
+      'B1: 3x12 at RIR 1 with target 4 (3 below): -5%, never an increase',
+      planned({ target_rir: 4 }),
+      session(sets3(12, 1)),
+      { decision: 'decrease_load', target_load_kg: 10, target_reps: 12 },
+    ],
+    [
+      'B1: 3x9 at RIR 1 with target 3 (2 below): same load, aim for 9 again',
+      planned({ target_rir: 3 }),
+      session(sets3(9, 1)),
+      { decision: 'hold', target_load_kg: 12, target_reps: 9 },
+    ],
+    [
+      'B1: 3x9 at RIR 1 with target 4 (3 below): -5%, aim for 9',
+      planned({ target_rir: 4 }),
+      session(sets3(9, 1)),
+      { decision: 'decrease_load', target_load_kg: 10, target_reps: 9 },
+    ],
+    [
+      'B1: one set 2 below target blocks the top-of-range increase',
+      planned({ target_rir: 3 }),
+      session([
+        { reps: 12, rir: 3 },
+        { reps: 12, rir: 3 },
+        { reps: 12, rir: 1 },
+      ]),
+      { decision: 'hold', target_load_kg: 12, target_reps: 12 },
+    ],
+    [
+      'B1: bodyweight too hard holds the reps (no load)',
+      unloaded({ exercise_id: 'push_up', rep_min: 8, rep_max: 12, target_rir: 4 }),
+      session(sets3(10, 1, 0), { exercise: 'push_up' }),
+      { decision: 'hold', target_reps: 10, target_load_kg: undefined },
+    ],
+    [
+      'S6: a 0-rep set that was not completed is "not attempted" and ignored',
+      planned(),
+      session([
+        { reps: 12, rir: 2 },
+        { reps: 12, rir: 2 },
+        { reps: 12, rir: 2 },
+        { reps: 0, completed: false },
+      ]),
+      { decision: 'increase_load', target_load_kg: 14 },
+    ],
+    [
+      'S6: a partial set (reps > 0, not completed) is a failure',
+      planned(),
+      session([
+        { reps: 12, rir: 2 },
+        { reps: 12, rir: 2 },
+        { reps: 3, completed: false },
+      ]),
+      { decision: 'decrease_load', target_load_kg: 10 },
     ],
     [
       'barbell never drops below the empty bar',
@@ -253,7 +332,7 @@ describe('nextTargets (table-driven)', () => {
   ];
 
   it.each(cases)('%s', (_name, plannedExercise, logs, expected) => {
-    const result = nextTargets(plannedExercise, logs, { today: TODAY });
+    const result = nextTargets(plannedExercise, logs, { today: TODAY, timezone: 'UTC' });
     for (const [key, value] of Object.entries(expected)) {
       expect(result[key as keyof NextTargets], key).toEqual(value);
     }
@@ -266,7 +345,10 @@ describe('nextTargets details', () => {
     const older = session(sets3(6, 2), { date: '2026-10-01', log: uuid(900) });
     const newer = session(sets3(12, 2), { date: '2026-10-05' });
     const other = session(sets3(3, 0), { date: '2026-10-07', exercise: 'push_up', log: uuid(901) });
-    const result = nextTargets(planned(), [...older, ...newer, ...other], { today: TODAY });
+    const result = nextTargets(planned(), [...older, ...newer, ...other], {
+      today: TODAY,
+      timezone: 'UTC',
+    });
     expect(result.decision).toBe('increase_load');
     expect(result.last_session_date).toBe('2026-10-05');
   });
@@ -277,15 +359,71 @@ describe('nextTargets details', () => {
       ...set,
       performed_at: '2026-09-23T23:30:00Z',
     }));
-    expect(nextTargets(planned(), logs, { today: TODAY }).decision).toBe('break_reset');
+    expect(nextTargets(planned(), logs, { today: TODAY, timezone: 'UTC' }).decision).toBe(
+      'break_reset',
+    );
     expect(
       nextTargets(planned(), logs, { today: TODAY, timezone: 'Europe/Bratislava' }).decision,
     ).toBe('add_reps');
   });
 
+  it('S1: ignores set logs dated after tomorrow (clock skew)', () => {
+    const future = session(sets3(3, 0), { date: '2026-10-10', log: uuid(902) });
+    const tomorrow = session(sets3(12, 2), { date: '2026-10-09', log: uuid(903) });
+    const result = nextTargets(planned(), [...session(sets3(9, 2)), ...future], {
+      today: TODAY,
+      timezone: 'UTC',
+    });
+    expect(result.last_session_date).toBe('2026-10-05');
+    expect(result.decision).toBe('add_reps');
+    const withTomorrow = nextTargets(planned(), [...future, ...tomorrow], {
+      today: TODAY,
+      timezone: 'UTC',
+    });
+    expect(withTomorrow).toMatchObject({
+      last_session_date: '2026-10-09',
+      decision: 'increase_load',
+    });
+  });
+
+  it('S2: requires a valid time zone', () => {
+    expect(() => nextTargets(planned(), [], { today: TODAY, timezone: 'Nowhere/City' })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('reasons state the actual kg change and never mention weight without load', () => {
+    const kettlebell = nextTargets(
+      planned({ exercise_id: 'kettlebell_goblet_squat' }),
+      session([{ reps: 5, load: 16, completed: false }], { exercise: 'kettlebell_goblet_squat' }),
+      { today: TODAY, timezone: 'UTC' },
+    );
+    expect(kettlebell.target_load_kg).toBe(12);
+    expect(kettlebell.reason).toContain('drops from 16 to 12 kg (25% lighter');
+    const harder = nextTargets(planned({ target_rir: 3 }), session(sets3(9, 1)), {
+      today: TODAY,
+      timezone: 'UTC',
+    });
+    expect(harder.reason).toMatch(/harder than planned \(1 reps in reserve, 3 planned\)/);
+    const unloadedCases = [
+      session(sets3(10, 2, 0), { exercise: 'push_up' }),
+      session(sets3(6, 2, 0), { exercise: 'push_up' }),
+      session([{ reps: 4, load: 0, completed: false }], { exercise: 'push_up' }),
+      session(sets3(10, 0, 0), { exercise: 'push_up' }),
+    ];
+    for (const logs of unloadedCases) {
+      const result = nextTargets(unloaded({ exercise_id: 'push_up' }), logs, {
+        today: TODAY,
+        timezone: 'UTC',
+      });
+      expect(result.reason).not.toMatch(/weight|kg/);
+    }
+  });
+
   it('honours a custom load step (2.5 kg dumbbells)', () => {
     const result = nextTargets(planned(), session(sets3(12, 2, 12.5)), {
       today: TODAY,
+      timezone: 'UTC',
       loadStepKg: 2.5,
     });
     expect(result.target_load_kg).toBe(15);
@@ -294,15 +432,18 @@ describe('nextTargets details', () => {
   it('keeps sets and target RIR from the plan', () => {
     const result = nextTargets(planned({ sets: 4, target_rir: 3 }), session(sets3(10, 3)), {
       today: TODAY,
+      timezone: 'UTC',
     });
     expect([result.sets, result.target_rir]).toEqual([4, 3]);
   });
 
   it('rejects invalid input', () => {
-    expect(() => nextTargets({ ...planned(), rep_min: 0 }, [], { today: TODAY })).toThrow();
-    expect(() => nextTargets(planned(), [], { today: '08.10.2026' })).toThrow();
     expect(() =>
-      nextTargets(planned({ exercise_id: 'quantum_squat' }), [], { today: TODAY }),
+      nextTargets({ ...planned(), rep_min: 0 }, [], { today: TODAY, timezone: 'UTC' }),
+    ).toThrow();
+    expect(() => nextTargets(planned(), [], { today: '08.10.2026', timezone: 'UTC' })).toThrow();
+    expect(() =>
+      nextTargets(planned({ exercise_id: 'quantum_squat' }), [], { today: TODAY, timezone: 'UTC' }),
     ).toThrow(/Unknown exercise_id/);
   });
 });

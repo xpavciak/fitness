@@ -223,9 +223,8 @@ describe('QA batch 2: nextTargets hand-computed cases', () => {
     expect(result.target_load_kg).toBeUndefined();
   });
 
-  // BUG (minor): at the minimum load (empty 20 kg bar, 2 kg dumbbell) the decision is
-  // `decrease_load` and the reason says "the weight drops by about 5%", but the load is unchanged.
-  it.fails('BUG: reason claims a 5% drop when the load cannot go lower', () => {
+  // Fixed (QA bug 7, S5): at the minimum load the reason says the weight stays.
+  it('the reason does not claim a drop when the load cannot go lower', () => {
     const result = run(
       planned('barbell_bench_press'),
       workout('barbell_bench_press', '2026-10-05', [[5, 20, 0, false]]),
@@ -234,9 +233,8 @@ describe('QA batch 2: nextTargets hand-computed cases', () => {
     expect(result.reason).not.toMatch(/drops/);
   });
 
-  // BUG (minor): timed bodyweight holds get "Good work. Same weight, aim for 50s per set." even
-  // though there is no weight.
-  it.fails('BUG: bodyweight plank reason talks about "Same weight"', () => {
+  // Fixed (QA bug 8): unloaded exercises never mention weight.
+  it('bodyweight plank reason does not talk about weight', () => {
     const pe = planned('plank', { rep_min: 30, rep_max: 60 });
     const result = run(
       pe,
