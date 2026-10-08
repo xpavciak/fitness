@@ -13,6 +13,7 @@ import {
   type WorkoutLog,
 } from '@fitness/engine';
 import { targetsFor } from '../engine/engine-service';
+import type { SavedWorkoutDraft } from '../storage/repository';
 import { exerciseName } from './labels';
 
 /** One set row in the logging UI. Inputs are strings so the user can type freely. */
@@ -87,7 +88,8 @@ export function buildWorkoutDraft(
           setIndex,
           reps: String(targets.target_reps),
           loadKg: load === undefined ? '' : String(load),
-          rir: targets.target_rir,
+          // RIR is not asked for timed sets (holds, carries, cardio).
+          rir: planned.measure === 'seconds' ? undefined : targets.target_rir,
           completed: false,
           performedAt: undefined,
         })),
@@ -318,4 +320,63 @@ export function summarizeLog(log: WorkoutLog): LoggedExercise[] {
     groups.set(set.exercise_id, group);
   }
   return [...groups.values()];
+}
+
+/** The user's inputs of a draft, for `Repository.saveWorkoutDraft`. */
+export function draftToSaved(draft: WorkoutDraft, savedAt: string): SavedWorkoutDraft {
+  return {
+    id: draft.id,
+    session_id: draft.sessionId,
+    started_at: draft.startedAt,
+    saved_at: savedAt,
+    sets: draft.exercises.flatMap((exercise) =>
+      exercise.sets.map((set) => ({
+        id: set.id,
+        planned_exercise_id: exercise.planned.id,
+        set_index: set.setIndex,
+        reps: set.reps,
+        load_kg: set.loadKg,
+        ...(set.rir === undefined ? {} : { rir: set.rir }),
+        completed: set.completed,
+        ...(set.performedAt === undefined ? {} : { performed_at: set.performedAt }),
+      })),
+    ),
+  };
+}
+
+/**
+ * Overlays saved inputs on a freshly built draft of the same session. Sets are matched by planned
+ * exercise and position; saved sets whose exercise is no longer in the session are dropped, and
+ * new sets keep their prefilled values.
+ */
+export function restoreDraft(fresh: WorkoutDraft, saved: SavedWorkoutDraft): WorkoutDraft {
+  if (saved.session_id !== fresh.sessionId) {
+    return fresh;
+  }
+  const byKey = new Map(
+    saved.sets.map((set) => [`${set.planned_exercise_id}#${set.set_index}`, set]),
+  );
+  return {
+    ...fresh,
+    id: saved.id,
+    startedAt: saved.started_at,
+    exercises: fresh.exercises.map((exercise) => ({
+      ...exercise,
+      sets: exercise.sets.map((set) => {
+        const stored = byKey.get(`${exercise.planned.id}#${set.setIndex}`);
+        if (!stored) {
+          return set;
+        }
+        return {
+          ...set,
+          id: stored.id,
+          reps: stored.reps,
+          loadKg: stored.load_kg,
+          rir: exercise.measure === 'seconds' ? undefined : stored.rir,
+          completed: stored.completed && stored.performed_at !== undefined,
+          performedAt: stored.completed ? stored.performed_at : undefined,
+        };
+      }),
+    })),
+  };
 }

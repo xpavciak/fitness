@@ -4,7 +4,7 @@ import {
   UNDER_18_MESSAGE,
   type WorkoutLog,
 } from '@fitness/engine';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { draftFromProfile } from '../logic/onboarding';
 import { sessionsByDate } from '../logic/plan-view';
 import { rescheduleProposals } from '../logic/actions';
@@ -281,5 +281,42 @@ describe('AppController: plan warnings', () => {
     await controller.regeneratePlan();
     expect(must(data().planNotes).plan_id).toBe(must(data().plan).id);
     expect(must(data().planNotes).plan_id).not.toBe(notes.plan_id);
+  });
+});
+
+describe('AppController: workout drafts and export files', () => {
+  it('finishing a workout removes its saved draft', async () => {
+    await onboard();
+    const [first] = sessionsByDate(must(must(data().plan).weeks[0]));
+    const log = logFor(must(first).id, must(first).scheduled_date);
+    await repository.saveWorkoutDraft({
+      id: log.id,
+      session_id: must(first).id,
+      started_at: log.started_at,
+      saved_at: log.started_at,
+      sets: [],
+    });
+    await controller.saveWorkout(log);
+    await expect(repository.loadWorkoutDraft(must(first).id)).resolves.toBeNull();
+  });
+
+  it('discarding removes the draft; delete-all also removes export files', async () => {
+    const deleteExportFiles = vi.fn(() => Promise.resolve());
+    setup();
+    controller = new AppController({ ...controller.services, deleteExportFiles });
+    await onboard();
+    const [first] = sessionsByDate(must(must(data().plan).weeks[0]));
+    await repository.saveWorkoutDraft({
+      id: '00000006-0000-4000-8000-000000000001',
+      session_id: must(first).id,
+      started_at: NOW,
+      saved_at: NOW,
+      sets: [],
+    });
+    await controller.discardWorkoutDraft(must(first).id);
+    await expect(repository.loadWorkoutDraft(must(first).id)).resolves.toBeNull();
+    await controller.deleteAllData();
+    expect(deleteExportFiles).toHaveBeenCalledTimes(1);
+    expect(store.keys()).toEqual([]);
   });
 });

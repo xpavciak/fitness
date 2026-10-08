@@ -1,6 +1,7 @@
 import { createSeededIdGenerator, WorkoutLogSchema, type WorkoutLog } from '@fitness/engine';
 import { describe, expect, it } from 'vitest';
-import { at, onboardedPlan, TIMEZONE, must } from '../test/fixtures';
+import { SavedWorkoutDraftSchema } from '../storage/repository';
+import { at, must, NOW, onboardedPlan, TIMEZONE } from '../test/fixtures';
 import { markSessionDone } from './actions';
 import { findSession, sessionsByDate } from './plan-view';
 import {
@@ -10,6 +11,8 @@ import {
   parseLoad,
   parseWholeNumber,
   restRemaining,
+  draftToSaved,
+  restoreDraft,
   stepRir,
   summarizeLog,
   toggleSetCompleted,
@@ -63,7 +66,9 @@ describe('buildWorkoutDraft', () => {
       expect(exercise.targets.decision).toBe('start');
       for (const set of exercise.sets) {
         expect(set.reps).toBe(String(exercise.targets.target_reps));
-        expect(set.rir).toBe(exercise.targets.target_rir);
+        expect(set.rir).toBe(
+          exercise.measure === 'seconds' ? undefined : exercise.targets.target_rir,
+        );
         expect(set.loadKg).toBe(exercise.loadable ? '' : '0');
       }
     }
@@ -219,5 +224,42 @@ describe('summarizeLog (read-only view of a done session)', () => {
     expect(summary[0]?.sets[0]).toBe(
       `${firstExercise.sets[0]?.reps} reps${firstExercise.loadable ? ' × 12 kg' : ''} · RIR ${firstExercise.targets.target_rir}`,
     );
+  });
+});
+
+describe('saved workout drafts (reload / app kill)', () => {
+  it('restores completed sets and inputs onto a fresh draft', () => {
+    const edited = updateSet(draftFor(), 0, 0, (set) => ({ ...set, loadKg: '14', reps: '7' }));
+    const toggled = toggleSetCompleted(edited, 0, 0, at('2026-10-12', '10:05:00'));
+    if (!toggled.ok) {
+      throw new Error(toggled.error);
+    }
+    const saved = draftToSaved(toggled.draft, at('2026-10-12', '10:05:01'));
+    expect(SavedWorkoutDraftSchema.parse(saved)).toEqual(saved);
+
+    // After a reload the screen rebuilds the form with new ids, then overlays the saved inputs.
+    const restored = restoreDraft(draftFor(), saved);
+    expect(restored.id).toBe(toggled.draft.id);
+    expect(restored.startedAt).toBe(toggled.draft.startedAt);
+    expect(restored.exercises[0]?.sets[0]).toEqual(toggled.draft.exercises[0]?.sets[0]);
+    expect(completedSetCount(restored)).toBe(1);
+    // The restored draft still produces a valid log.
+    expect(
+      workoutLogFromDraft(restored, { userId, endedAt: at('2026-10-12', '11:00:00') }).sets,
+    ).toHaveLength(1);
+  });
+
+  it('ignores a draft of another session and sets that no longer exist', () => {
+    const saved = draftToSaved(draftFor(), NOW);
+    const other = draftFor(must(second));
+    expect(restoreDraft(other, saved)).toBe(other);
+    const stale = {
+      ...saved,
+      sets: [
+        { ...must(saved.sets[0]), planned_exercise_id: '00000009-0000-4000-8000-000000000009' },
+      ],
+    };
+    const fresh = draftFor();
+    expect(restoreDraft(fresh, stale).exercises).toEqual(fresh.exercises);
   });
 });

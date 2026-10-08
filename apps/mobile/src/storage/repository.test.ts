@@ -8,6 +8,7 @@ import {
   LocalRepository,
   STORAGE_KEYS,
   StoredDataError,
+  WORKOUT_DRAFT_PREFIX,
 } from './repository';
 
 const { plan, outcome } = onboardedPlan();
@@ -188,5 +189,75 @@ describe('LocalRepository: plan notes (generator warnings)', () => {
       JSON.stringify({ plan_id: '00000009-0000-4000-8000-000000000009', warnings: ['Stale.'] }),
     );
     expect((await repo.load()).planNotes).toBeNull();
+  });
+});
+
+describe('LocalRepository: in-progress workout drafts', () => {
+  const sessionId = session.id;
+  const draft = {
+    id: '00000005-0000-4000-8000-000000000001',
+    session_id: sessionId,
+    started_at: at(session.scheduled_date),
+    saved_at: at(session.scheduled_date, '10:06:00'),
+    sets: [
+      {
+        id: '00000005-0000-4000-8000-000000000002',
+        planned_exercise_id: must(session.exercises[0]).id,
+        set_index: 0,
+        reps: '8',
+        load_kg: '12',
+        rir: 2,
+        completed: true,
+        performed_at: at(session.scheduled_date, '10:05:00'),
+      },
+    ],
+  };
+
+  it('saves, loads and removes a draft per session', async () => {
+    await repo.saveWorkoutDraft(draft);
+    expect(store.keys()).toEqual([`${WORKOUT_DRAFT_PREFIX}${sessionId}`]);
+    await expect(repo.loadWorkoutDraft(sessionId)).resolves.toEqual(draft);
+    await expect(repo.loadWorkoutDraft(must(plan.weeks[0]?.sessions[1]).id)).resolves.toBeNull();
+    await repo.removeWorkoutDraft(sessionId);
+    await expect(repo.loadWorkoutDraft(sessionId)).resolves.toBeNull();
+  });
+
+  it('validates drafts on save and load', async () => {
+    await expect(repo.saveWorkoutDraft({ ...draft, started_at: 'yesterday' })).rejects.toThrow();
+    await store.setItem(
+      `${WORKOUT_DRAFT_PREFIX}${sessionId}`,
+      JSON.stringify({ ...draft, sets: 'x' }),
+    );
+    await expect(repo.loadWorkoutDraft(sessionId)).rejects.toBeInstanceOf(StoredDataError);
+  });
+
+  it('delete-all removes drafts too', async () => {
+    await repo.saveProfile(outcome.profile);
+    await repo.saveWorkoutDraft(draft);
+    await repo.clearAll();
+    expect(store.keys()).toEqual([]);
+  });
+
+  it('writes the profile before a new plan, and removes the plan first when blocked', async () => {
+    const order: string[] = [];
+    class RecordingStore extends MemoryKeyValueStore {
+      override setItem(key: string, value: string): Promise<void> {
+        order.push(`set ${key}`);
+        return super.setItem(key, value);
+      }
+      override removeItem(key: string): Promise<void> {
+        order.push(`remove ${key}`);
+        return super.removeItem(key);
+      }
+    }
+    const recording = new LocalRepository(new RecordingStore());
+    await recording.saveSetup({ profile: outcome.profile, goal: outcome.goal, plan });
+    expect(order[0]).toBe(`set ${STORAGE_KEYS.profile}`);
+    expect(order.indexOf(`set ${STORAGE_KEYS.plan}`)).toBeGreaterThan(
+      order.indexOf(`set ${STORAGE_KEYS.goal}`),
+    );
+    order.length = 0;
+    await recording.saveSetup({ profile: outcome.profile, goal: outcome.goal, plan: null });
+    expect(order[0]).toBe(`remove ${STORAGE_KEYS.plan}`);
   });
 });

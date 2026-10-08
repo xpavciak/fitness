@@ -20,6 +20,8 @@ export interface Store {
   state: LoadState;
   /** An action is running: disable action buttons. */
   busy: boolean;
+  /** Changes when the app is foregrounded or a tab gains focus (a new screen visit). */
+  clock: number;
   services: Services;
   /** Stable controller (e.g. for `refreshClock` in focus effects). */
   controller: AppController;
@@ -27,6 +29,7 @@ export interface Store {
   today: () => string;
   completeOnboarding(draft: OnboardingDraft): Promise<PlanResult>;
   saveWorkout(log: WorkoutLog): Promise<void>;
+  discardWorkoutDraft(sessionId: string): Promise<void>;
   acceptProposal(proposal: ScheduleProposal): Promise<void>;
   regeneratePlan(): Promise<PlanResult>;
   exportData(): Promise<DataExport>;
@@ -60,11 +63,13 @@ export function StoreProvider({ services, children }: { services: Services; chil
     (): Store => ({
       state: snapshot.state,
       busy: snapshot.busy,
+      clock: snapshot.clock,
       services: controller.services,
       controller,
       today: () => controller.today(),
       completeOnboarding: (draft) => controller.completeOnboarding(draft),
       saveWorkout: (log) => controller.saveWorkout(log),
+      discardWorkoutDraft: (sessionId) => controller.discardWorkoutDraft(sessionId),
       acceptProposal: (proposal) => controller.acceptProposal(proposal),
       regeneratePlan: () => controller.regeneratePlan(),
       exportData: () => controller.exportData(),

@@ -1,3 +1,4 @@
+import { localDateOf, type WorkoutLog } from '@fitness/engine';
 import { StyleSheet, Text, View } from 'react-native';
 import { formatShortDate } from '../logic/labels';
 import { adherenceSummary, exerciseProgress, type ExerciseProgress } from '../logic/progress';
@@ -13,11 +14,27 @@ function percent(value: number | null | undefined): string {
 export function ProgressScreen({ data }: { data: AppData }) {
   const store = useStore();
   const { plan, profile } = data;
-  if (!plan || !profile) {
+  if (!profile) {
     return (
       <Screen testID="progress-empty">
         <Title>Progress</Title>
         <Body>Finish onboarding to start tracking your progress.</Body>
+      </Screen>
+    );
+  }
+  const exercises = exerciseProgress(data.workoutLogs, profile.timezone);
+  if (!plan) {
+    // Onboarded, but no active plan (e.g. the edited health answers need a professional's
+    // go-ahead first). Adherence needs a plan; the history and records still belong to the user.
+    return (
+      <Screen testID="progress-empty">
+        <Title>Progress</Title>
+        <Body>
+          You have no active plan right now, so weekly adherence and streaks are paused. Your
+          workout history and personal records are below.
+        </Body>
+        <WorkoutHistory logs={data.workoutLogs} timezone={profile.timezone} />
+        <Records exercises={exercises} />
       </Screen>
     );
   }
@@ -28,7 +45,6 @@ export function ProgressScreen({ data }: { data: AppData }) {
     store.today(),
     data.scheduleChanges,
   );
-  const exercises = exerciseProgress(data.workoutLogs, profile.timezone);
   const { streak, thisWeek, stats, reflection } = summary;
 
   return (
@@ -83,6 +99,14 @@ export function ProgressScreen({ data }: { data: AppData }) {
         ))}
       </Card>
 
+      <Records exercises={exercises} />
+    </Screen>
+  );
+}
+
+function Records({ exercises }: { exercises: ExerciseProgress[] }) {
+  return (
+    <>
       <Heading>Personal records</Heading>
       {exercises.length === 0 ? (
         <Body muted testID="no-records">
@@ -93,7 +117,30 @@ export function ProgressScreen({ data }: { data: AppData }) {
           <ExerciseRecord key={exercise.exerciseId} exercise={exercise} />
         ))
       )}
-    </Screen>
+    </>
+  );
+}
+
+function WorkoutHistory({ logs, timezone }: { logs: readonly WorkoutLog[]; timezone: string }) {
+  if (logs.length === 0) {
+    return null;
+  }
+  const ordered = [...logs].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+  return (
+    <>
+      <Heading>Workout history</Heading>
+      <Card testID="workout-history">
+        {ordered.map((log) => {
+          const completed = log.sets.filter((set) => set.completed).length;
+          return (
+            <Body key={log.id}>
+              {formatShortDate(localDateOf(log.started_at, timezone))} · {completed} set
+              {completed === 1 ? '' : 's'}
+            </Body>
+          );
+        })}
+      </Card>
+    </>
   );
 }
 

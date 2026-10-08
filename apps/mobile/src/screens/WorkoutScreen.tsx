@@ -1,9 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { findSession, sessionLog } from '../logic/plan-view';
 import {
   buildWorkoutDraft,
   completedSetCount,
+  draftToSaved,
+  restoreDraft,
   stepRir,
   summarizeLog,
   toggleSetCompleted,
@@ -22,11 +24,13 @@ import {
   ErrorText,
   Field,
   Heading,
+  Loading,
   Row,
   Screen,
   Title,
 } from '../ui/components';
 import { MIN_TOUCH } from '../ui/components';
+import { useTwoStepConfirm } from '../ui/use-taps';
 import { colors, spacing } from '../ui/theme';
 import { RestTimer, type RestTimerState } from './RestTimer';
 
@@ -38,12 +42,16 @@ export interface WorkoutScreenProps {
 
 export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProps) {
   const store = useStore();
+  const { repository } = store.services;
   const found = data.plan ? findSession(data.plan, sessionId) : null;
   const profile = data.profile;
   // A done session opens read-only: logging it again would create a second log.
   const existingLog = found ? sessionLog(data.workoutLogs, found.session.id) : null;
-  const [draft, setDraft] = useState<WorkoutDraft | null>(() =>
-    found && profile && !existingLog && found.session.status !== 'done'
+  const canLog =
+    found !== null && profile !== null && !existingLog && found.session.status !== 'done';
+  // The form as prefilled from the plan; the saved in-progress inputs are overlaid on it.
+  const [fresh] = useState<WorkoutDraft | null>(() =>
+    canLog
       ? buildWorkoutDraft(found.session, data.workoutLogs, {
           today: store.today(),
           timezone: profile.timezone,
@@ -53,12 +61,52 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
         })
       : null,
   );
+  const [draft, setDraft] = useState<WorkoutDraft | null>(null);
   const [timer, setTimer] = useState<RestTimerState | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [finishError, setFinishError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  // True from "Finish"/"Discard" until the screen closes: no more draft saves, no read-only flash.
+  const [closing, setClosing] = useState(false);
+  const discard = useTwoStepConfirm<'discard'>();
 
-  if (found && (existingLog || found.session.status === 'done')) {
+  // Restore the in-progress workout once (survives a reload or an app kill).
+  useEffect(() => {
+    if (!fresh) {
+      return undefined;
+    }
+    let active = true;
+    repository.loadWorkoutDraft(fresh.sessionId).then(
+      (saved) => {
+        if (active) {
+          setDraft(saved ? restoreDraft(fresh, saved) : fresh);
+        }
+      },
+      (cause: unknown) => {
+        if (active) {
+          setDraft(fresh);
+          setStorageError(`Your unfinished workout could not be restored: ${message(cause)}`);
+        }
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [fresh, repository]);
+
+  // Save the inputs after every change.
+  useEffect(() => {
+    if (!draft || closing) {
+      return;
+    }
+    repository
+      .saveWorkoutDraft(draftToSaved(draft, store.services.now()))
+      .catch((cause: unknown) => {
+        setStorageError(`Your progress could not be saved on this device: ${message(cause)}`);
+      });
+  }, [draft, closing, repository, store.services]);
+
+  if (!closing && found && (existingLog || found.session.status === 'done')) {
     return (
       <Screen testID="workout-readonly">
         <Title>{found.session.title}</Title>
@@ -84,6 +132,10 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
         <Button label="Back to plan" variant="secondary" onPress={onFinished} />
       </Screen>
     );
+  }
+
+  if (fresh && !draft) {
+    return <Loading />;
   }
 
   if (!found || !profile || !draft) {
@@ -118,17 +170,30 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
     try {
       log = workoutLogFromDraft(draft, { userId: profile.user_id, endedAt: store.services.now() });
     } catch (cause) {
-      setFinishError(cause instanceof Error ? cause.message : String(cause));
+      setFinishError(message(cause));
       return;
     }
-    setSaving(true);
+    setClosing(true);
     store
       .saveWorkout(log)
       .then(onFinished)
       .catch((cause: unknown) => {
-        setFinishError(`Could not save: ${cause instanceof Error ? cause.message : String(cause)}`);
-        setSaving(false);
+        setFinishError(`Could not save: ${message(cause)}`);
+        setClosing(false);
       });
+  };
+
+  const discardWorkout = () => {
+    discard.press('discard', () => {
+      setClosing(true);
+      store
+        .discardWorkoutDraft(draft.sessionId)
+        .then(onFinished)
+        .catch((cause: unknown) => {
+          setFinishError(`Could not discard: ${message(cause)}`);
+          setClosing(false);
+        });
+    });
   };
 
   const done = completedSetCount(draft);
@@ -138,8 +203,11 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
       <Body muted>
         {found.session.est_minutes} min · {done} set{done === 1 ? '' : 's'} done
       </Body>
+      {storageError !== null ? <ErrorText testID="draft-error">{storageError}</ErrorText> : null}
       {timer ? (
         <RestTimer
+          // A new rest remounts the timer, so its clock starts from the new start time.
+          key={timer.startedAtMs}
           timer={timer}
           onDismiss={() => {
             setTimer(null);
@@ -164,13 +232,24 @@ export function WorkoutScreen({ data, sessionId, onFinished }: WorkoutScreenProp
       ))}
       {finishError !== null ? <ErrorText testID="finish-error">{finishError}</ErrorText> : null}
       <Button
-        label={saving ? 'Saving...' : 'Finish workout'}
-        disabled={saving || store.busy}
+        label={closing ? 'Saving...' : 'Finish workout'}
+        disabled={closing || store.busy}
         onPress={finish}
         testID="finish-workout"
       />
+      <Button
+        label={discard.armed('discard') ? 'Tap again to discard this workout' : 'Discard workout'}
+        variant="danger"
+        disabled={closing || store.busy}
+        onPress={discardWorkout}
+        testID="discard-workout"
+      />
     </Screen>
   );
+}
+
+function message(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function ExerciseCard({
@@ -235,42 +314,44 @@ function ExerciseCard({
                 compact
               />
             ) : null}
-            <View style={styles.rir}>
-              <Text style={styles.rirLabel}>RIR</Text>
-              <View style={styles.rirControls}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Decrease RIR"
-                  onPress={() => {
-                    onChange(setIndex, (current) => ({
-                      ...current,
-                      rir: stepRir(current.rir, -1),
-                    }));
-                  }}
-                  style={styles.stepper}
-                  testID={`${testPrefix}-rir-minus`}
-                >
-                  <Text>−</Text>
-                </Pressable>
-                <Text style={styles.rirValue} testID={`${testPrefix}-rir`}>
-                  {set.rir ?? '–'}
-                </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Increase RIR"
-                  onPress={() => {
-                    onChange(setIndex, (current) => ({
-                      ...current,
-                      rir: stepRir(current.rir, 1),
-                    }));
-                  }}
-                  style={styles.stepper}
-                  testID={`${testPrefix}-rir-plus`}
-                >
-                  <Text>+</Text>
-                </Pressable>
+            {exercise.measure === 'seconds' ? null : (
+              <View style={styles.rir}>
+                <Text style={styles.rirLabel}>RIR</Text>
+                <View style={styles.rirControls}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Decrease RIR"
+                    onPress={() => {
+                      onChange(setIndex, (current) => ({
+                        ...current,
+                        rir: stepRir(current.rir, -1),
+                      }));
+                    }}
+                    style={styles.stepper}
+                    testID={`${testPrefix}-rir-minus`}
+                  >
+                    <Text>−</Text>
+                  </Pressable>
+                  <Text style={styles.rirValue} testID={`${testPrefix}-rir`}>
+                    {set.rir ?? '–'}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Increase RIR"
+                    onPress={() => {
+                      onChange(setIndex, (current) => ({
+                        ...current,
+                        rir: stepRir(current.rir, 1),
+                      }));
+                    }}
+                    style={styles.stepper}
+                    testID={`${testPrefix}-rir-plus`}
+                  >
+                    <Text>+</Text>
+                  </Pressable>
+                </View>
               </View>
-            </View>
+            )}
             <Pressable
               accessibilityRole="checkbox"
               aria-checked={set.completed}
@@ -293,9 +374,11 @@ function ExerciseCard({
           </View>
         );
       })}
-      <Row>
-        <Body muted>RIR = reps in reserve: how many more reps you could have done.</Body>
-      </Row>
+      {exercise.measure === 'seconds' ? null : (
+        <Row>
+          <Body muted>RIR = reps in reserve: how many more reps you could have done.</Body>
+        </Row>
+      )}
     </Card>
   );
 }

@@ -6,6 +6,7 @@ export interface KeyValueStore {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
   removeItem(key: string): Promise<void>;
+  getAllKeys(): Promise<readonly string[]>;
 }
 
 export class MemoryKeyValueStore implements KeyValueStore {
@@ -23,6 +24,10 @@ export class MemoryKeyValueStore implements KeyValueStore {
   removeItem(key: string): Promise<void> {
     this.items.delete(key);
     return Promise.resolve();
+  }
+
+  getAllKeys(): Promise<readonly string[]> {
+    return Promise.resolve(this.keys());
   }
 
   /** Test helper: the raw stored keys. */

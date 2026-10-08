@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { newId } from '../src/platform/ids';
+import { deleteExportFiles } from '../src/platform/share-json';
 import { deviceTimeZone } from '../src/platform/timezone';
 import { StoreProvider, type Services } from '../src/state/store';
 import { asyncStorageStore } from '../src/storage/async-storage-store';
@@ -15,6 +16,7 @@ const services: Services = {
   newId,
   timezone: deviceTimeZone,
   now: () => new Date().toISOString(),
+  deleteExportFiles,
 };
 
 export default function RootLayout() {

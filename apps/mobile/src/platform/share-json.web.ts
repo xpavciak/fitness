@@ -16,3 +16,8 @@ export function shareJson(fileName: string, json: string): Promise<string> {
   }, REVOKE_DELAY_MS);
   return Promise.resolve(`Downloaded ${fileName}.`);
 }
+
+/** Web exports are downloads; nothing is kept by the app, so there is nothing to delete. */
+export function deleteExportFiles(): Promise<void> {
+  return Promise.resolve();
+}

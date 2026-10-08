@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
 /**
- * QA final (T11): UI defects found while driving the exported web app with Playwright. Each
- * `it.fails` documents a BUG that is still open; the test starts passing (and must be turned into
- * a plain `it`) once the bug is fixed.
+ * QA final (T11): UI defects found while driving the exported web app with Playwright, now fixed.
+ * These are regression tests (they started as `it.fails` bug markers).
  */
 import type { WorkoutLog } from '@fitness/engine';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -39,11 +38,11 @@ async function onboardedServices(): Promise<{ services: Services; data: AppData 
 }
 
 describe('QA final - Settings', () => {
-  // BUG (major): "Delete all local data" asks for a second tap to confirm, but a double tap (two
+  // Was a major bug: "Delete all local data" asked for a second tap to confirm, but a double tap (two
   // taps in quick succession) satisfies the confirmation and wipes all local-only data with no
   // undo. Reproduced in Chromium with Playwright `dblclick()` on `delete-data`. Expected: a second
   // tap only confirms after a short delay (e.g. 500 ms) or through a separate confirm dialog.
-  it.fails('a double tap on "Delete all local data" does not delete anything', async () => {
+  it('a double tap on "Delete all local data" does not delete anything', async () => {
     const { services, data } = await onboardedServices();
     const onDeleted = vi.fn();
     render(
@@ -69,6 +68,53 @@ describe('QA final - Settings', () => {
   });
 });
 
+describe('QA final - Settings: deliberate confirmation still works', () => {
+  async function renderSettings() {
+    const { services, data } = await onboardedServices();
+    const onDeleted = vi.fn();
+    render(
+      <StoreProvider services={services}>
+        <SettingsScreen data={data} onEditAnswers={vi.fn()} onDeleted={onDeleted} />
+      </StoreProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId('delete-data').getAttribute('aria-disabled')).not.toBe('true');
+    });
+    return { services, onDeleted };
+  }
+
+  it('deletes after a second tap at least 600 ms after the first', async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const { services, onDeleted } = await renderSettings();
+      fireEvent.click(screen.getByTestId('delete-data'));
+      await screen.findByText('Tap again to delete everything');
+      now += 700;
+      fireEvent.click(screen.getByTestId('delete-data'));
+      await waitFor(() => {
+        expect(onDeleted).toHaveBeenCalledTimes(1);
+      });
+      expect((await services.repository.load()).profile).toBeNull();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('a double tap on "Regenerate plan" does not replace the plan', async () => {
+    const { services } = await renderSettings();
+    const before = (await services.repository.load()).plan?.id;
+    fireEvent.click(screen.getByTestId('regenerate-plan'));
+    await screen.findByText('Tap again to replace your plan');
+    fireEvent.click(screen.getByTestId('regenerate-plan'));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect((await services.repository.load()).plan?.id).toBe(before);
+    // Cancel disarms.
+    fireEvent.click(screen.getByTestId('cancel-confirm'));
+    expect(screen.getByText('Regenerate plan')).toBeTruthy();
+  });
+});
+
 describe('QA final - Progress', () => {
   const log: WorkoutLog = {
     id: '00000000-0000-4000-8000-0000000000aa',
@@ -77,10 +123,10 @@ describe('QA final - Progress', () => {
     sets: [],
   };
 
-  // BUG (minor): after "Edit answers" sets a PAR-Q+ red flag, the plan is removed (as designed),
+  // Was a minor bug: after "Edit answers" set a PAR-Q+ red flag, the plan is removed (as designed),
   // but Progress then says "Finish onboarding to start tracking your progress." although the user
   // finished onboarding and has logged workouts; their history and records are hidden.
-  it.fails('does not tell an onboarded user with logs to finish onboarding', async () => {
+  it('does not tell an onboarded user with logs to finish onboarding', async () => {
     const { services, data } = await onboardedServices();
     const blocked: AppData = { ...EMPTY_APP_DATA, profile: data.profile, workoutLogs: [log] };
     render(
@@ -89,5 +135,8 @@ describe('QA final - Progress', () => {
       </StoreProvider>,
     );
     expect(screen.getByTestId('progress-empty').textContent).not.toMatch(/finish onboarding/i);
+    // The history is still shown.
+    expect(screen.getByTestId('workout-history').textContent).toContain('0 sets');
+    expect(screen.getByText('Personal records')).toBeTruthy();
   });
 });

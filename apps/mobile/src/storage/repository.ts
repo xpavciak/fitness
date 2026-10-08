@@ -2,6 +2,8 @@ import {
   EXERCISE_CATALOG,
   GoalSchema,
   IdSchema,
+  IsoDateTimeSchema,
+  MAX_LOGGED_RIR,
   ProfileSchema,
   ScheduleChangeSchema,
   createCatalogValidators,
@@ -21,6 +23,33 @@ export const PlanNotesSchema = z.object({
   warnings: z.array(z.string().trim().min(1).max(500)).max(20),
 });
 export type PlanNotes = z.infer<typeof PlanNotesSchema>;
+
+/**
+ * An in-progress workout (the user's inputs only), saved after every change so a reload or an
+ * app kill never loses completed sets. The form is rebuilt from the plan and then overlaid with
+ * these values (`restoreDraft`). One key per session; removed on finish, discard and delete-all.
+ */
+export const SavedWorkoutDraftSchema = z.object({
+  id: IdSchema,
+  session_id: IdSchema,
+  started_at: IsoDateTimeSchema,
+  saved_at: IsoDateTimeSchema,
+  sets: z
+    .array(
+      z.object({
+        id: IdSchema,
+        planned_exercise_id: IdSchema,
+        set_index: z.int().min(0),
+        reps: z.string().max(12),
+        load_kg: z.string().max(12),
+        rir: z.int().min(0).max(MAX_LOGGED_RIR).optional(),
+        completed: z.boolean(),
+        performed_at: IsoDateTimeSchema.optional(),
+      }),
+    )
+    .max(200),
+});
+export type SavedWorkoutDraft = z.infer<typeof SavedWorkoutDraftSchema>;
 
 /** Everything the app stores on the device. */
 export interface AppData {
@@ -84,6 +113,10 @@ export interface Repository {
   /** Appends schedule changes (replacing any with the same `id`). */
   addScheduleChanges(changes: readonly ScheduleChange[]): Promise<void>;
   exportData(exportedAt: string): Promise<DataExport>;
+  /** The saved in-progress workout for a session, or null. Invalid drafts throw `StoredDataError`. */
+  loadWorkoutDraft(sessionId: string): Promise<SavedWorkoutDraft | null>;
+  saveWorkoutDraft(draft: SavedWorkoutDraft): Promise<void>;
+  removeWorkoutDraft(sessionId: string): Promise<void>;
   /** Deletes every key this app stores on the device; throws `ClearDataError` listing failures. */
   clearAll(): Promise<void>;
 }
@@ -108,6 +141,8 @@ export class ClearDataError extends Error {
 }
 
 const PREFIX = 'fitness/v1/';
+/** Prefix of the per-session workout draft keys (`<prefix><session id>`). */
+export const WORKOUT_DRAFT_PREFIX = `${PREFIX}workout_draft/`;
 export const STORAGE_KEYS = {
   profile: `${PREFIX}profile`,
   goal: `${PREFIX}goal`,
@@ -126,6 +161,18 @@ const schemas = {
   workoutLogs: validators.WorkoutLog.array(),
   scheduleChanges: ScheduleChangeSchema.array(),
 } satisfies Record<keyof typeof STORAGE_KEYS, z.ZodType>;
+
+function draftKey(sessionId: string): string {
+  return `${WORKOUT_DRAFT_PREFIX}${IdSchema.parse(sessionId)}`;
+}
+
+function parseJson(key: string, raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new StoredDataError(key, error instanceof Error ? error.message : 'not JSON');
+  }
+}
 
 export function upsertById<T extends { id: string }>(
   items: readonly T[],
@@ -200,14 +247,19 @@ export class LocalRepository implements Repository {
         throw new Error('Profile, goal and plan must belong to the same user');
       }
       if (plan === null || notes === null) {
+        // Blocked by screening: remove the plan first, so a failure later never leaves a usable
+        // plan next to answers that block it.
         await this.store.removeItem(STORAGE_KEYS.plan);
         await this.store.removeItem(STORAGE_KEYS.planNotes);
+        await this.store.setItem(STORAGE_KEYS.goal, JSON.stringify(goal));
+        await this.store.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
       } else {
+        // A new plan: write the (screened) profile and goal first, then the plan built from them.
+        await this.store.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
+        await this.store.setItem(STORAGE_KEYS.goal, JSON.stringify(goal));
         await this.store.setItem(STORAGE_KEYS.plan, JSON.stringify(plan));
         await this.store.setItem(STORAGE_KEYS.planNotes, JSON.stringify(notes));
       }
-      await this.store.setItem(STORAGE_KEYS.goal, JSON.stringify(goal));
-      await this.store.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
     });
   }
 
@@ -232,9 +284,41 @@ export class LocalRepository implements Repository {
     });
   }
 
+  loadWorkoutDraft(sessionId: string): Promise<SavedWorkoutDraft | null> {
+    return this.queue.run(async () => {
+      const key = draftKey(sessionId);
+      const raw = await this.store.getItem(key);
+      if (raw === null) {
+        return null;
+      }
+      const result = SavedWorkoutDraftSchema.safeParse(parseJson(key, raw));
+      if (!result.success || result.data.session_id !== sessionId) {
+        throw new StoredDataError(
+          key,
+          result.success ? 'session id mismatch' : result.error.message,
+        );
+      }
+      return result.data;
+    });
+  }
+
+  saveWorkoutDraft(draft: SavedWorkoutDraft): Promise<void> {
+    return this.queue.run(async () => {
+      const parsed = SavedWorkoutDraftSchema.parse(draft);
+      await this.store.setItem(draftKey(parsed.session_id), JSON.stringify(parsed));
+    });
+  }
+
+  removeWorkoutDraft(sessionId: string): Promise<void> {
+    return this.queue.run(() => this.store.removeItem(draftKey(sessionId)));
+  }
+
   clearAll(): Promise<void> {
     return this.queue.run(async () => {
-      const keys = Object.values(STORAGE_KEYS);
+      const drafts = (await this.store.getAllKeys()).filter((key) =>
+        key.startsWith(WORKOUT_DRAFT_PREFIX),
+      );
+      const keys = [...Object.values(STORAGE_KEYS), ...drafts];
       const results = await Promise.allSettled(keys.map((key) => this.store.removeItem(key)));
       const failed = keys.filter((_, index) => results[index]?.status === 'rejected');
       if (failed.length > 0) {
@@ -271,12 +355,7 @@ export class LocalRepository implements Repository {
     if (raw === null) {
       return undefined;
     }
-    let json: unknown;
-    try {
-      json = JSON.parse(raw);
-    } catch (error) {
-      throw new StoredDataError(key, error instanceof Error ? error.message : 'not JSON');
-    }
+    const json = parseJson(key, raw);
     const result = schemas[name].safeParse(json);
     if (!result.success) {
       throw new StoredDataError(key, result.error.message);

@@ -29,6 +29,8 @@ export interface Services {
   timezone: () => string;
   /** Current instant (ISO 8601). */
   now: () => string;
+  /** Removes exported files the platform keeps (native share cache); optional in tests. */
+  deleteExportFiles?: () => Promise<void>;
 }
 
 export interface StoreSnapshot {
@@ -129,6 +131,9 @@ export class AppController {
         throw new Error('This session is already logged.');
       }
       await this.services.repository.saveWorkoutLog(log);
+      if (log.planned_session_id !== undefined) {
+        await this.services.repository.removeWorkoutDraft(log.planned_session_id);
+      }
       const plan = data.plan ? markSessionDone(data.plan, log) : null;
       if (plan && plan !== data.plan) {
         await this.services.repository.savePlan(plan);
@@ -182,6 +187,11 @@ export class AppController {
     });
   }
 
+  /** Drops the in-progress workout of a session (the user chose "Discard workout"). */
+  discardWorkoutDraft(sessionId: string): Promise<void> {
+    return this.enqueue(() => this.services.repository.removeWorkoutDraft(sessionId));
+  }
+
   exportData(): Promise<DataExport> {
     return this.enqueue(() => this.services.repository.exportData(this.services.now()));
   }
@@ -191,6 +201,7 @@ export class AppController {
     return this.enqueue(async () => {
       try {
         await this.services.repository.clearAll();
+        await this.services.deleteExportFiles?.();
       } catch (error) {
         await this.resync();
         throw error;

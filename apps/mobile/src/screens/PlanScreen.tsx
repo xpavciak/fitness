@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { explainPlan, screen } from '../engine/engine-service';
 import { minimumDoseProposal, rescheduleProposals } from '../logic/actions';
+import { changesForDisplay, proposalLabel } from '../logic/proposals';
 import { formatShortDate } from '../logic/labels';
 import {
   currentWeek,
@@ -30,6 +31,7 @@ import {
   Title,
 } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
+import { useTapGuard } from '../ui/use-taps';
 
 const STATUS_TONES: Record<SessionDisplayStatus, 'neutral' | 'good' | 'bad' | 'info'> = {
   done: 'good',
@@ -55,7 +57,10 @@ export interface PlanScreenProps {
 export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenProps) {
   const store = useStore();
   const [panel, setPanel] = useState<Panel | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Shown inside the session's own card, so nothing above the tapped button moves.
+  const [notice, setNotice] = useState<{ sessionId: string; text: string } | null>(null);
+  // Drops the second tap of a double tap, whatever control ends up under the finger.
+  const guard = useTapGuard(store.clock);
   const [error, setError] = useState<string | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
   const { plan, profile } = data;
@@ -93,12 +98,12 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
   const { week, relation } = currentWeek(plan, today);
   const next = todaysSession(plan, today, data.workoutLogs);
 
-  const run = (action: () => Promise<void>, success: string) => {
+  const run = (sessionId: string, action: () => Promise<void>, success: string) => {
     setError(null);
     action()
       .then(() => {
         setPanel(null);
-        setNotice(success);
+        setNotice({ sessionId, text: success });
       })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -126,10 +131,11 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
   const applyMinimumDose = (session: PlannedSession) => {
     const proposal = minimumDoseProposal(plan, profile, session.id, ctx);
     if (!proposal) {
-      setNotice(`${session.title} already fits in 15 minutes.`);
+      setNotice({ sessionId: session.id, text: `${session.title} already fits in 15 minutes.` });
       return;
     }
     run(
+      session.id,
       () => store.acceptProposal(proposal),
       proposal.changes.map((change) => change.reason).join(' '),
     );
@@ -170,9 +176,9 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
           </Body>
           <Button
             label={next.isToday ? 'Start workout' : 'Start now anyway'}
-            onPress={() => {
+            onPress={guard(() => {
               onOpenSession(next.session.id);
-            }}
+            })}
             disabled={store.busy}
             testID="start-today"
           />
@@ -184,11 +190,6 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
         </Card>
       )}
 
-      {notice !== null ? (
-        <Card testID="notice">
-          <Body>{notice}</Body>
-        </Card>
-      ) : null}
       {error !== null ? <ErrorText testID="plan-error">{error}</ErrorText> : null}
 
       <Heading>
@@ -207,9 +208,9 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
           <Card key={session.id} testID={`session-${session.id}`}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
+              onPress={guard(() => {
                 onOpenSession(session.id);
-              }}
+              })}
               testID={`open-session-${session.id}`}
               style={styles.sessionHeader}
             >
@@ -234,9 +235,9 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                   <Button
                     label="Reschedule"
                     variant="secondary"
-                    onPress={() => {
+                    onPress={guard(() => {
                       openPanel({ sessionId: session.id, mode: 'missed' });
-                    }}
+                    })}
                     disabled={store.busy}
                     testID="reschedule-missed"
                   />
@@ -245,18 +246,18 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                     <Button
                       label="Can't make it"
                       variant="secondary"
-                      onPress={() => {
+                      onPress={guard(() => {
                         openPanel({ sessionId: session.id, mode: 'missed' });
-                      }}
+                      })}
                       disabled={store.busy}
                       testID="cant-make-it"
                     />
                     <Button
                       label="Short on time"
                       variant="secondary"
-                      onPress={() => {
+                      onPress={guard(() => {
                         openPanel({ sessionId: session.id, mode: 'shorten', minutes: 30 });
-                      }}
+                      })}
                       disabled={store.busy}
                       testID="short-on-time"
                     />
@@ -266,14 +267,20 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                   <Button
                     label="Minimum dose (10–15 min)"
                     variant="secondary"
-                    onPress={() => {
+                    onPress={guard(() => {
                       applyMinimumDose(session);
-                    }}
+                    })}
                     disabled={store.busy}
                     testID="minimum-dose"
                   />
                 ) : null}
               </Row>
+            ) : null}
+            {notice?.sessionId === session.id && status !== 'done' ? (
+              // Cleared once the session is done (e.g. the minimum-dose note after the workout).
+              <View style={styles.notice} testID="notice">
+                <Body>{notice.text}</Body>
+              </View>
             ) : null}
             {panelOpen ? (
               <View style={styles.panel} testID="proposals">
@@ -297,9 +304,13 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
                 <ProposalList
                   proposals={panel.proposals}
                   busy={store.busy}
-                  onAccept={(proposal) => {
-                    run(() => store.acceptProposal(proposal), 'Your week has been updated.');
-                  }}
+                  onAccept={guard((proposal: ScheduleProposal) => {
+                    run(
+                      session.id,
+                      () => store.acceptProposal(proposal),
+                      'Your week has been updated.',
+                    );
+                  })}
                 />
                 <Button
                   label="Cancel"
@@ -316,13 +327,6 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
     </Screen>
   );
 }
-
-const KIND_LABELS: Record<ScheduleProposal['kind'], string> = {
-  move: 'Move',
-  merge: 'Merge',
-  shorten: 'Shorten',
-  skip: 'Skip',
-};
 
 function ProposalList({
   proposals,
@@ -342,17 +346,15 @@ function ProposalList({
         <View key={proposal.changes.map((change) => change.id).join('-')} style={styles.proposal}>
           <Badge
             label={
-              index === 0
-                ? `${KIND_LABELS[proposal.kind]} (recommended)`
-                : KIND_LABELS[proposal.kind]
+              index === 0 ? `${proposalLabel(proposal)} (recommended)` : proposalLabel(proposal)
             }
             tone="info"
           />
-          {proposal.changes.map((change) => (
+          {changesForDisplay(proposal).map((change) => (
             <Body key={change.id}>{change.reason}</Body>
           ))}
           <Button
-            label={`Accept: ${KIND_LABELS[proposal.kind].toLowerCase()}`}
+            label={`Accept: ${proposalLabel(proposal)}`}
             onPress={() => {
               onAccept(proposal);
             }}
@@ -373,6 +375,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.border,
     paddingTop: spacing.md,
+  },
+  notice: {
+    padding: spacing.md,
+    borderRadius: 8,
+    backgroundColor: colors.chip,
   },
   proposal: {
     gap: spacing.sm,

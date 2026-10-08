@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, StyleSheet, Text, View } from 'react-native';
 import { formatSeconds, restRemaining } from '../logic/workout';
 import { Button } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
@@ -10,11 +10,14 @@ export interface RestTimerState {
 }
 
 const TICK_MS = 250;
+export const REST_OVER_TEXT = 'Rest over: next set';
 
 /**
  * Counts down from the planned rest. The time left is computed from the start instant, so it
  * stays correct across re-renders and slow ticks. The interval stops when the rest is over, and
- * only that transition is announced to screen readers (the countdown itself is not).
+ * only that transition is announced to screen readers (the countdown itself is not): through
+ * `AccessibilityInfo` (iOS VoiceOver ignores live regions) and an assertive live region on web.
+ * Callers pass `key={timer.startedAtMs}`, so a new rest remounts the timer with a fresh clock.
  */
 export function RestTimer({ timer, onDismiss }: { timer: RestTimerState; onDismiss: () => void }) {
   const [nowMs, setNowMs] = useState(timer.startedAtMs);
@@ -24,6 +27,7 @@ export function RestTimer({ timer, onDismiss }: { timer: RestTimerState; onDismi
       setNowMs(current);
       if (restRemaining(timer.durationSec, timer.startedAtMs, current) === 0) {
         clearInterval(interval);
+        AccessibilityInfo.announceForAccessibility(REST_OVER_TEXT);
       }
     }, TICK_MS);
     return () => {
@@ -36,7 +40,7 @@ export function RestTimer({ timer, onDismiss }: { timer: RestTimerState; onDismi
     <View style={styles.timer} testID="rest-timer">
       {over ? (
         <Text style={styles.label} aria-live="assertive" testID="rest-over">
-          Rest over: next set
+          {REST_OVER_TEXT}
         </Text>
       ) : (
         <Text style={styles.label}>Rest</Text>

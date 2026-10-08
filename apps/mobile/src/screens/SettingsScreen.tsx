@@ -4,9 +4,10 @@ import { shareJson } from '../platform/share-json';
 import type { AppData } from '../storage/repository';
 import { useStore } from '../state/store';
 import { Body, Button, Card, ErrorText, Heading, Screen, Title } from '../ui/components';
+import { useTwoStepConfirm } from '../ui/use-taps';
 import { DISCLAIMER } from './OnboardingScreen';
 
-type Confirm = 'regenerate' | 'delete' | null;
+type ConfirmKey = 'regenerate' | 'delete';
 
 export interface SettingsScreenProps {
   data: AppData;
@@ -16,7 +17,8 @@ export interface SettingsScreenProps {
 
 export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScreenProps) {
   const store = useStore();
-  const [confirm, setConfirm] = useState<Confirm>(null);
+  // A double tap never confirms: the second tap must come at least 600 ms after the first.
+  const confirm = useTwoStepConfirm<ConfirmKey>();
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { profile, goal, plan } = data;
@@ -30,7 +32,7 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
         setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
-        setConfirm(null);
+        confirm.cancel();
       });
   };
 
@@ -43,27 +45,23 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
   };
 
   const regenerate = () => {
-    if (confirm !== 'regenerate') {
-      setConfirm('regenerate');
-      return;
-    }
-    run(async () => {
-      const result = await store.regeneratePlan();
-      return result.ok
-        ? `New plan created. It starts on ${formatShortDate(result.plan.start_date)}.`
-        : result.message;
+    confirm.press('regenerate', () => {
+      run(async () => {
+        const result = await store.regeneratePlan();
+        return result.ok
+          ? `New plan created. It starts on ${formatShortDate(result.plan.start_date)}.`
+          : result.message;
+      });
     });
   };
 
   const deleteAll = () => {
-    if (confirm !== 'delete') {
-      setConfirm('delete');
-      return;
-    }
-    run(async () => {
-      await store.deleteAllData();
-      onDeleted();
-      return 'All local data deleted.';
+    confirm.press('delete', () => {
+      run(async () => {
+        await store.deleteAllData();
+        onDeleted();
+        return 'All local data deleted.';
+      });
     });
   };
 
@@ -104,7 +102,7 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
           testID="export-data"
         />
         <Button
-          label={confirm === 'regenerate' ? 'Tap again to replace your plan' : 'Regenerate plan'}
+          label={confirm.armed('regenerate') ? 'Tap again to replace your plan' : 'Regenerate plan'}
           variant="secondary"
           disabled={store.busy || !profile || !goal}
           onPress={regenerate}
@@ -112,19 +110,20 @@ export function SettingsScreen({ data, onEditAnswers, onDeleted }: SettingsScree
         />
         <Body muted>Your workout history is kept when the plan is regenerated.</Body>
         <Button
-          label={confirm === 'delete' ? 'Tap again to delete everything' : 'Delete all local data'}
+          label={
+            confirm.armed('delete') ? 'Tap again to delete everything' : 'Delete all local data'
+          }
           variant="danger"
           onPress={deleteAll}
           disabled={store.busy}
           testID="delete-data"
         />
-        {confirm !== null ? (
+        {confirm.armed('delete') || confirm.armed('regenerate') ? (
           <Button
             label="Cancel"
             variant="secondary"
-            onPress={() => {
-              setConfirm(null);
-            }}
+            onPress={confirm.cancel}
+            testID="cancel-confirm"
           />
         ) : null}
       </Card>

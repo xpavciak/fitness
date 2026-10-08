@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import type { AppData } from '../storage/repository';
 import { Body, Button, Card, ErrorText, Loading, Screen, Title } from '../ui/components';
+import { useTwoStepConfirm } from '../ui/use-taps';
 import { useStore } from './store';
 
 /**
@@ -9,7 +10,7 @@ import { useStore } from './store';
  */
 export function WithData({ children }: { children: (data: AppData) => ReactNode }) {
   const store = useStore();
-  const [confirm, setConfirm] = useState(false);
+  const confirm = useTwoStepConfirm<'delete'>();
   const [error, setError] = useState<string | null>(null);
   const { state } = store;
 
@@ -26,15 +27,13 @@ export function WithData({ children }: { children: (data: AppData) => ReactNode 
         </Card>
         <Button label="Try again" variant="secondary" onPress={() => void store.reload()} />
         <Button
-          label={confirm ? 'Tap again to delete everything' : 'Delete local data'}
+          label={confirm.armed('delete') ? 'Tap again to delete everything' : 'Delete local data'}
           variant="danger"
           onPress={() => {
-            if (!confirm) {
-              setConfirm(true);
-              return;
-            }
-            store.deleteAllData().catch((cause: unknown) => {
-              setError(cause instanceof Error ? cause.message : String(cause));
+            confirm.press('delete', () => {
+              store.deleteAllData().catch((cause: unknown) => {
+                setError(cause instanceof Error ? cause.message : String(cause));
+              });
             });
           }}
         />

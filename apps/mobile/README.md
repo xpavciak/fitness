@@ -67,6 +67,9 @@ AsyncStorage keys (`fitness/v1/...`):
 - `profile`
 - `goal`
 - `plan` (the active plan)
+- `workout_draft/<session id>`: the in-progress workout's inputs (`SavedWorkoutDraftSchema`). It is
+  saved after every change, so a reload or an app kill keeps completed sets. Finish, "Discard
+  workout" and delete-all remove it.
 - `plan_notes`: `{ plan_id, warnings }`, the generator's warnings for the active plan, shown on
   the Plan screen. Notes with another `plan_id` are ignored.
 - `workout_logs`
@@ -77,7 +80,8 @@ writes the plan (or removes it) before the goal and profile. Regenerating the pl
 `plan` and keeps the logs and the changes. Settings → "Export my
 data" writes all keys as one JSON document (`format: "fitness-app-export"`, `version: 1`). On web
 the document is downloaded (`share-json.web.ts`). On native it is written to a cache file with
-`expo-file-system` and shared as a file with `expo-sharing` (`share-json.ts`). "Delete all local data" removes
+`expo-file-system`, shared as a file with `expo-sharing`, and deleted again afterwards
+(`share-json.ts`). Delete-all also removes any leftover `fitness-data-*.json` files from the cache. "Delete all local data" removes
 every key and reports any key it could not delete (`ClearDataError`).
 
 When onboarding hits a PAR-Q+ red flag, or the user may be under 18, the app shows the engine's
@@ -112,3 +116,12 @@ condition. Root `pnpm build` runs workspace builds in topological order, so the 
 before `expo export`. Root `typecheck` builds the packages first. The `@fitness/source` condition
 is deliberately **not** enabled for Metro. The engine's sources import `./x.js` specifiers, and
 Metro would have to map them to `.ts`, so consuming `dist` is the safe default.
+
+## Taps
+
+- **Two-step confirm** (delete all, regenerate the plan, discard a workout): the first tap arms
+  the button. A second tap within 600 ms is ignored, so a double tap never confirms. A
+  deliberate later tap confirms (`src/logic/taps.ts`).
+- **Double-tap guard** (Plan screen actions and session headers): a tap within 600 ms of the
+  previous guarded tap is dropped, so the second tap of a double tap cannot hit what moved under
+  the finger. The guard resets on every screen visit.

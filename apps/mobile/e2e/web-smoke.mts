@@ -163,6 +163,13 @@ async function main(): Promise<void> {
     await page.getByTestId('rest-timer').waitFor();
     await snap(page, 'workout');
     step(`logged a set (${reps} reps prefilled) and the rest timer started`);
+
+    // QA: the in-progress workout survives a reload (or an app kill).
+    await page.reload();
+    await page.getByTestId('workout-screen').waitFor();
+    const checked = await page.getByTestId('set-0-0-complete').getAttribute('aria-checked');
+    assert(checked === 'true', `set 1 is still completed after a reload (aria-checked=${checked})`);
+    step('the completed set is still there after a reload');
     await page.getByTestId('finish-workout').click();
     await page.getByTestId('plan-screen').waitFor();
     const status = await page.getByTestId(`status-${sessionId}`).innerText();
@@ -199,16 +206,22 @@ async function main(): Promise<void> {
     const reasons = await page.getByTestId('proposals').innerText();
     await snap(page, 'proposals');
     assert(/missed|skip/i.test(reasons), `proposal reasons: ${reasons}`);
+    // Taps within 600 ms of the previous one are dropped (double-tap guard); read, then accept.
+    await page.waitForTimeout(700);
     await page.getByTestId('accept-proposal-0').click();
     await page.getByText('Your week has been updated.').waitFor();
     step('rescheduling proposals with reasons shown and one accepted');
 
-    await page.getByTestId('minimum-dose').first().click();
+    // QA: a double tap must not open a session when the layout shifts after the first tap.
+    await page.waitForTimeout(700);
+    await page.getByTestId('minimum-dose').first().dblclick();
     await page
       .getByTestId('notice')
       .getByText(/minimum-dose|already fits/)
       .waitFor();
-    step('minimum dose applied');
+    await page.waitForTimeout(300);
+    assert((await page.getByTestId('workout-screen').count()) === 0, 'no session opened');
+    step('minimum dose applied with a double tap; no session opened by the second tap');
 
     // --- Persistence, export and delete ------------------------------------------------------
     await page.reload();
@@ -258,7 +271,14 @@ async function main(): Promise<void> {
 
     await page.getByTestId('tab-settings').click();
     await page.getByTestId('settings-screen').waitFor();
-    await page.getByTestId('delete-data').click();
+    // QA (major): a double tap must not delete anything.
+    await page.getByTestId('delete-data').dblclick();
+    await page.waitForTimeout(300);
+    await page.getByText('Tap again to delete everything').waitFor();
+    assert((await page.getByTestId('settings-screen').count()) === 1, 'still on Settings');
+    step('a double tap on "Delete all local data" deletes nothing');
+    // A deliberate second tap (after 600 ms) does.
+    await page.waitForTimeout(700);
     await page.getByTestId('delete-data').click();
     await page.getByTestId('onboarding-about').waitFor();
     await page.reload();
