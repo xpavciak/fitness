@@ -265,3 +265,21 @@ describe('AppController: delete and failures (S3)', () => {
     expect(controller.today()).toBe('2026-10-12');
   });
 });
+
+describe('AppController: plan warnings', () => {
+  it('persists the generator warnings with the plan and replaces them on regenerate', async () => {
+    await controller.load();
+    const result = await controller.completeOnboarding(
+      completedDraft({ daysPerWeek: 3, availableDays: ['mon', 'tue', 'wed'], slotTimes: {} }),
+    );
+    expect(result.ok && result.warnings.length).toBeGreaterThan(0);
+    const notes = must(data().planNotes);
+    expect(notes.plan_id).toBe(must(data().plan).id);
+    expect(notes.warnings[0]).toMatch(/back-to-back/);
+    expect((await repository.load()).planNotes).toEqual(notes);
+
+    await controller.regeneratePlan();
+    expect(must(data().planNotes).plan_id).toBe(must(data().plan).id);
+    expect(must(data().planNotes).plan_id).not.toBe(notes.plan_id);
+  });
+});

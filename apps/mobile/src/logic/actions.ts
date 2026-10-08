@@ -95,7 +95,6 @@ export function rescheduleProposals(
     throw new Error(`Session ${event.session_id} is not in the plan`);
   }
   return proposalsFor(found.week, event, {
-    planId: plan.id,
     today: localToday(ctx.now, profile.timezone),
     now: ctx.now,
     newId: ctx.newId,

@@ -1,6 +1,7 @@
 import {
   EXERCISE_CATALOG,
   GoalSchema,
+  IdSchema,
   ProfileSchema,
   ScheduleChangeSchema,
   createCatalogValidators,
@@ -10,9 +11,16 @@ import {
   type ScheduleChange,
   type WorkoutLog,
 } from '@fitness/engine';
-import type { z } from 'zod';
+import { z } from 'zod';
 import { SerialQueue } from '../lib/serial-queue';
 import type { KeyValueStore } from './key-value-store';
+
+/** App-side metadata of the active plan: the generator's warnings (shown on the Plan screen). */
+export const PlanNotesSchema = z.object({
+  plan_id: IdSchema,
+  warnings: z.array(z.string().trim().min(1).max(500)).max(20),
+});
+export type PlanNotes = z.infer<typeof PlanNotesSchema>;
 
 /** Everything the app stores on the device. */
 export interface AppData {
@@ -20,6 +28,8 @@ export interface AppData {
   goal: Goal | null;
   /** The active plan. Regenerating replaces it; logs and schedule changes are kept. */
   plan: Plan | null;
+  /** Notes for `plan` (null when there is no plan or the notes belong to another plan). */
+  planNotes: PlanNotes | null;
   workoutLogs: WorkoutLog[];
   /** Append-only audit trail of accepted schedule changes (all plans). */
   scheduleChanges: ScheduleChange[];
@@ -29,6 +39,7 @@ export const EMPTY_APP_DATA: AppData = {
   profile: null,
   goal: null,
   plan: null,
+  planNotes: null,
   workoutLogs: [],
   scheduleChanges: [],
 };
@@ -51,15 +62,23 @@ export interface Repository {
   load(): Promise<AppData>;
   saveProfile(profile: Profile): Promise<void>;
   saveGoal(goal: Goal): Promise<void>;
+  /** Updates the active plan in place (status changes, rescheduling); its notes are kept. */
   savePlan(plan: Plan): Promise<void>;
-  /** Removes the active plan (e.g. when screening blocks after the answers were edited). */
+  /** Replaces the active plan with a newly generated one and its warnings (plan first). */
+  saveNewPlan(plan: Plan, warnings: readonly string[]): Promise<void>;
+  /** Removes the active plan and its notes (e.g. when screening blocks after the answers were edited). */
   removePlan(): Promise<void>;
   /**
    * Saves the result of onboarding. Everything is validated before anything is written, and the
    * plan is written (or removed) first, so a failure part-way never leaves a usable plan that
    * contradicts the saved profile.
    */
-  saveSetup(setup: { profile: Profile; goal: Goal; plan: Plan | null }): Promise<void>;
+  saveSetup(setup: {
+    profile: Profile;
+    goal: Goal;
+    plan: Plan | null;
+    warnings?: readonly string[];
+  }): Promise<void>;
   /** Inserts or replaces (by `id`) a workout log. */
   saveWorkoutLog(log: WorkoutLog): Promise<void>;
   /** Appends schedule changes (replacing any with the same `id`). */
@@ -93,6 +112,7 @@ export const STORAGE_KEYS = {
   profile: `${PREFIX}profile`,
   goal: `${PREFIX}goal`,
   plan: `${PREFIX}plan`,
+  planNotes: `${PREFIX}plan_notes`,
   workoutLogs: `${PREFIX}workout_logs`,
   scheduleChanges: `${PREFIX}schedule_changes`,
 } as const;
@@ -102,6 +122,7 @@ const schemas = {
   profile: ProfileSchema,
   goal: GoalSchema,
   plan: validators.Plan,
+  planNotes: PlanNotesSchema,
   workoutLogs: validators.WorkoutLog.array(),
   scheduleChanges: ScheduleChangeSchema.array(),
 } satisfies Record<keyof typeof STORAGE_KEYS, z.ZodType>;
@@ -144,23 +165,46 @@ export class LocalRepository implements Repository {
     return this.queue.run(() => this.write('plan', plan));
   }
 
-  removePlan(): Promise<void> {
-    return this.queue.run(() => this.store.removeItem(STORAGE_KEYS.plan));
+  saveNewPlan(plan: Plan, warnings: readonly string[]): Promise<void> {
+    return this.queue.run(async () => {
+      const parsed = schemas.plan.parse(plan);
+      const notes = schemas.planNotes.parse({ plan_id: parsed.id, warnings });
+      await this.store.setItem(STORAGE_KEYS.plan, JSON.stringify(parsed));
+      await this.store.setItem(STORAGE_KEYS.planNotes, JSON.stringify(notes));
+    });
   }
 
-  saveSetup(setup: { profile: Profile; goal: Goal; plan: Plan | null }): Promise<void> {
+  removePlan(): Promise<void> {
+    return this.queue.run(async () => {
+      await this.store.removeItem(STORAGE_KEYS.plan);
+      await this.store.removeItem(STORAGE_KEYS.planNotes);
+    });
+  }
+
+  saveSetup(setup: {
+    profile: Profile;
+    goal: Goal;
+    plan: Plan | null;
+    warnings?: readonly string[];
+  }): Promise<void> {
     return this.queue.run(async () => {
       // Validate everything up front: nothing is written when any part is invalid.
       const profile = schemas.profile.parse(setup.profile);
       const goal = schemas.goal.parse(setup.goal);
       const plan = setup.plan === null ? null : schemas.plan.parse(setup.plan);
+      const notes =
+        plan === null
+          ? null
+          : schemas.planNotes.parse({ plan_id: plan.id, warnings: setup.warnings ?? [] });
       if (goal.user_id !== profile.user_id || (plan !== null && plan.user_id !== profile.user_id)) {
         throw new Error('Profile, goal and plan must belong to the same user');
       }
-      if (plan === null) {
+      if (plan === null || notes === null) {
         await this.store.removeItem(STORAGE_KEYS.plan);
+        await this.store.removeItem(STORAGE_KEYS.planNotes);
       } else {
         await this.store.setItem(STORAGE_KEYS.plan, JSON.stringify(plan));
+        await this.store.setItem(STORAGE_KEYS.planNotes, JSON.stringify(notes));
       }
       await this.store.setItem(STORAGE_KEYS.goal, JSON.stringify(goal));
       await this.store.setItem(STORAGE_KEYS.profile, JSON.stringify(profile));
@@ -200,10 +244,11 @@ export class LocalRepository implements Repository {
   }
 
   private async loadUnlocked(): Promise<AppData> {
-    const [profile, goal, plan, workoutLogs, scheduleChanges] = await Promise.all([
+    const [profile, goal, plan, planNotes, workoutLogs, scheduleChanges] = await Promise.all([
       this.read('profile'),
       this.read('goal'),
       this.read('plan'),
+      this.read('planNotes'),
       this.read('workoutLogs'),
       this.read('scheduleChanges'),
     ]);
@@ -211,6 +256,8 @@ export class LocalRepository implements Repository {
       profile: profile ?? null,
       goal: goal ?? null,
       plan: plan ?? null,
+      // Notes left over from another plan (e.g. an interrupted write) are ignored.
+      planNotes: plan && planNotes?.plan_id === plan.id ? planNotes : null,
       workoutLogs: workoutLogs ?? [],
       scheduleChanges: scheduleChanges ?? [],
     };

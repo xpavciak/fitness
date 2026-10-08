@@ -15,6 +15,7 @@ import {
   replacePlannedSession,
   screenProfile,
   weeklyStreak,
+  TemplateCoachProvider,
   type AdherenceStats,
   type GeneratePlanResult,
   type Goal,
@@ -35,27 +36,15 @@ import {
   type WorkoutLog,
 } from '@fitness/engine';
 
-/** `generatePlan` result with the plan warnings the app shows (empty until the engine adds them). */
-export type PlanResult =
-  | (Extract<GeneratePlanResult, { ok: true }> & { warnings: string[] })
-  | Extract<GeneratePlanResult, { ok: false }>;
+/** `generatePlan` result; a successful one carries `warnings` (shown on the Plan screen). */
+export type PlanResult = GeneratePlanResult;
 
 export function createPlan(
   profile: Profile,
   goal: Goal,
   opts: { today: string; now: string; newId: IdGenerator },
 ): PlanResult {
-  const result = generatePlan(profile, goal, opts);
-  if (!result.ok) {
-    return result;
-  }
-  const warnings = (result as { warnings?: unknown }).warnings;
-  return {
-    ...result,
-    warnings: Array.isArray(warnings)
-      ? warnings.filter((w): w is string => typeof w === 'string')
-      : [],
-  };
+  return generatePlan(profile, goal, opts);
 }
 
 export function targetsFor(
@@ -70,7 +59,6 @@ export function proposalsFor(
   week: PlanWeek,
   event: RescheduleEvent,
   opts: {
-    planId: string;
     today: string;
     now: string;
     newId: IdGenerator;
@@ -80,7 +68,6 @@ export function proposalsFor(
   },
 ): ScheduleProposal[] {
   return proposeReschedules(week, event, {
-    plan_id: opts.planId,
     today: opts.today,
     now: opts.now,
     newId: opts.newId,
@@ -109,7 +96,11 @@ export function adherence(input: {
   timezone: string;
   changes: readonly ScheduleChange[];
 }): { stats: AdherenceStats; streak: WeeklyStreak } {
-  const stats = adherenceStats(input.plan, input.logs, input.today, input.timezone, input.changes);
+  const stats = adherenceStats(input.plan, input.logs, {
+    today: input.today,
+    timezone: input.timezone,
+    changes: input.changes,
+  });
   return { stats, streak: weeklyStreak(stats) };
 }
 
@@ -125,4 +116,48 @@ export function e1rm(loadKg: number, reps: number): number | undefined {
 /** PAR-Q+ and age gate for a saved profile (the same check `generatePlan` runs first). */
 export function screen(profile: Profile, today: string): ScreeningResult {
   return screenProfile(profile, today);
+}
+
+export type CoachSource = 'ai' | 'template';
+
+/** A coach text and where it came from; the UI labels `ai` texts as AI-generated. */
+export interface CoachText {
+  text: string;
+  source: CoachSource;
+}
+
+/**
+ * Accepts both coach result shapes: a plain string (template provider today) or
+ * `{ text, source }` (the upcoming engine API). Anything else is a bug and throws.
+ */
+export function toCoachText(value: unknown): CoachText {
+  if (typeof value === 'string') {
+    return { text: value, source: 'template' };
+  }
+  if (typeof value === 'object' && value !== null && 'text' in value && 'source' in value) {
+    const { text, source } = value;
+    if (typeof text === 'string' && (source === 'ai' || source === 'template')) {
+      return { text, source };
+    }
+  }
+  throw new TypeError('Unexpected coach text shape');
+}
+
+/**
+ * Coach texts (D5): the deterministic template provider only, no network. The Claude proxy
+ * provider stays unwired until a server-side proxy exists. The template provider's synchronous
+ * methods are used so screens can render the text directly.
+ */
+const coach = new TemplateCoachProvider();
+
+export function explainPlan(plan: Plan, profile: Profile): CoachText {
+  return toCoachText(coach.planText(plan, profile));
+}
+
+export function weeklyReflection(
+  stats: AdherenceStats,
+  weekIndex: number,
+  profile: Profile,
+): CoachText {
+  return toCoachText(coach.reflectionText(stats, weekIndex, profile));
 }

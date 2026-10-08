@@ -144,8 +144,11 @@ async function main(): Promise<void> {
     assert(sessionId, 'the today card names its session');
     const sessions = await page.locator('[data-testid^="session-"]').count();
     assert(sessions >= 1, 'the plan shows sessions for the week');
+    await page.getByTestId('toggle-explanation').click();
+    const explanation = await page.getByTestId('plan-explanation-text').innerText();
+    assert(/week plan/.test(explanation), `plan explanation: ${explanation}`);
     await snap(page, 'plan');
-    step(`onboarding -> plan (${sessions} sessions this week)`);
+    step(`onboarding -> plan (${sessions} sessions this week) with the coach explanation`);
 
     await page.getByTestId('start-today').click();
     await page.getByTestId('workout-screen').waitFor();
@@ -179,10 +182,14 @@ async function main(): Promise<void> {
     await page.getByTestId('tab-progress').click();
     await page.getByTestId('progress-screen').waitFor();
     await page.getByTestId('weekly-streak').waitFor();
+    const reflection = await page.getByTestId('weekly-reflection').innerText();
+    assert(/Week 1 reflection/.test(reflection), `weekly reflection: ${reflection}`);
     const records = await page.locator('[data-testid^="record-"]').count();
     assert(records >= 1, 'the progress screen lists the logged exercise');
     await snap(page, 'progress');
-    step(`progress shows adherence, the weekly streak and ${records} exercise record(s)`);
+    step(
+      `progress shows adherence, the streak, the weekly reflection and ${records} exercise record(s)`,
+    );
 
     // --- Rescheduling and the minimum dose ----------------------------------------------------
     await page.getByTestId('tab-plan').click();

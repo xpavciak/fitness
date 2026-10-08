@@ -38,6 +38,10 @@ folder. The script never downloads browsers itself; CI installs Chromium first. 
   (`generatePlan`, `nextTargets`, `proposeReschedules`, `applyScheduleChanges`,
   `adherenceStats`/`weeklyStreak`, `personalRecords`, ...). Engine API changes are absorbed
   there. Schemas, types, the catalog and date helpers are imported directly.
+- **Coach texts (D5).** `explainPlan` (Plan screen, "Why this plan?") and `weeklyReflection`
+  (Progress screen) come from the engine's `TemplateCoachProvider` through `engine-service.ts`.
+  No network is used. The Claude proxy provider stays unwired. `toCoachText` accepts both a plain
+  string and `{ text, source }`, and the UI labels `source: 'ai'` texts as "AI-generated".
 - `src/storage/`: the `Repository` interface and `LocalRepository` on top of a `KeyValueStore`.
   The app uses AsyncStorage, which falls back to `localStorage` on web. Every save and load is
   validated with the engine Zod schemas, using the catalog-aware validators for plans and logs.
@@ -63,6 +67,8 @@ AsyncStorage keys (`fitness/v1/...`):
 - `profile`
 - `goal`
 - `plan` (the active plan)
+- `plan_notes`: `{ plan_id, warnings }`, the generator's warnings for the active plan, shown on
+  the Plan screen. Notes with another `plan_id` are ignored.
 - `workout_logs`
 - `schedule_changes`: an append-only audit trail of accepted rescheduling proposals.
 

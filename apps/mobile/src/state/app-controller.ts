@@ -102,14 +102,18 @@ export class AppController {
       });
       const { profile, goal, result } = outcome;
       if (result.ok) {
-        await this.services.repository.saveSetup({ profile, goal, plan: result.plan });
-        return { data: { ...data, profile, goal, plan: result.plan }, result };
+        const { plan, warnings } = result;
+        await this.services.repository.saveSetup({ profile, goal, plan, warnings });
+        return {
+          data: { ...data, profile, goal, plan, planNotes: { plan_id: plan.id, warnings } },
+          result,
+        };
       }
       if (data.profile === null) {
         return { data, result };
       }
       await this.services.repository.saveSetup({ profile, goal, plan: null });
-      return { data: { ...data, profile, goal, plan: null }, result };
+      return { data: { ...data, profile, goal, plan: null, planNotes: null }, result };
     });
   }
 
@@ -169,11 +173,12 @@ export class AppController {
         newId: this.services.newId,
       });
       if (result.ok) {
-        await this.services.repository.savePlan(result.plan);
-        return { data: { ...data, plan: result.plan }, result };
+        const { plan, warnings } = result;
+        await this.services.repository.saveNewPlan(plan, warnings);
+        return { data: { ...data, plan, planNotes: { plan_id: plan.id, warnings } }, result };
       }
       await this.services.repository.removePlan();
-      return { data: { ...data, plan: null }, result };
+      return { data: { ...data, plan: null, planNotes: null }, result };
     });
   }
 

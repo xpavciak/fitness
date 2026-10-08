@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { at, onboardedPlan, TIMEZONE, must } from '../test/fixtures';
 import { markSessionDone } from './actions';
 import { sessionsByDate } from './plan-view';
-import { adherenceSummary, exerciseProgress } from './progress';
+import { adherenceSummary, exerciseProgress, reflectionWeekIndex } from './progress';
 
 const { plan, outcome } = onboardedPlan({ equipment: ['dumbbells', 'bench'] });
 const userId = outcome.profile.user_id;
@@ -37,19 +37,24 @@ describe('adherenceSummary', () => {
   it('reports the weekly percentage and the streak', () => {
     const logs = week0.map((session) => dumbbellLog(session.id, session.scheduled_date, 16, 8));
     const done = logs.reduce((current, log) => markSessionDone(current, log), plan);
-    const summary = adherenceSummary(done, logs, '2026-10-18', TIMEZONE, []);
+    const summary = adherenceSummary(done, outcome.profile, logs, '2026-10-18', []);
     expect(summary.thisWeek).toEqual({ percentage: 100, completed: 3, planned: 3 });
     expect(summary.streak).toMatchObject({ current: 1, best: 1, current_week_met: true });
     expect(summary.stats.overall.percentage).toBe(100);
+    expect(summary.reflection).toMatchObject({ weekIndex: 0, source: 'template' });
+    expect(summary.reflection.text).toMatch(/all 3 planned sessions in week 1/);
   });
 
   it('counts missed sessions and has no current week before the plan starts', () => {
-    const missed = adherenceSummary(plan, [], '2026-10-18', TIMEZONE, []);
+    const missed = adherenceSummary(plan, outcome.profile, [], '2026-10-18', []);
     expect(missed.thisWeek).toEqual({ percentage: 0, completed: 0, planned: 3 });
     expect(missed.streak.current).toBe(0);
-    const before = adherenceSummary(plan, [], '2026-10-08', TIMEZONE, []);
+    const before = adherenceSummary(plan, outcome.profile, [], '2026-10-08', []);
     expect(before.thisWeek).toBeNull();
     expect(before.stats.overall.percentage).toBeNull();
+    // Before the plan starts, the reflection looks ahead at week 1.
+    expect(before.reflection.weekIndex).toBe(0);
+    expect(before.reflection.text).toMatch(/has not started yet/);
   });
 });
 
@@ -76,5 +81,14 @@ describe('exerciseProgress', () => {
 
   it('is empty without logs', () => {
     expect(exerciseProgress([], TIMEZONE)).toEqual([]);
+  });
+});
+
+describe('reflectionWeekIndex', () => {
+  it('prefers the current week, then the latest finished one', () => {
+    const during = adherenceSummary(plan, outcome.profile, [], '2026-10-21', []);
+    expect(reflectionWeekIndex(during.stats)).toBe(1);
+    const after = adherenceSummary(plan, outcome.profile, [], '2027-03-01', []);
+    expect(reflectionWeekIndex(after.stats)).toBe(plan.weeks.length - 1);
   });
 });

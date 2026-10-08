@@ -1,7 +1,7 @@
 import type { PlannedSession, RescheduleEvent, ScheduleProposal } from '@fitness/engine';
 import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { screen } from '../engine/engine-service';
+import { explainPlan, screen } from '../engine/engine-service';
 import { minimumDoseProposal, rescheduleProposals } from '../logic/actions';
 import { formatShortDate } from '../logic/labels';
 import {
@@ -57,6 +57,7 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
   const [panel, setPanel] = useState<Panel | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showExplanation, setShowExplanation] = useState(false);
   const { plan, profile } = data;
 
   if (!plan || !profile) {
@@ -137,6 +138,25 @@ export function PlanScreen({ data, onOpenSession, onEditAnswers }: PlanScreenPro
   return (
     <Screen testID="plan-screen">
       <Title>Your plan</Title>
+      {data.planNotes?.plan_id === plan.id && data.planNotes.warnings.length > 0 ? (
+        <Card testID="plan-warnings">
+          <Heading>Good to know</Heading>
+          {data.planNotes.warnings.map((warning) => (
+            <Body key={warning}>{warning}</Body>
+          ))}
+        </Card>
+      ) : null}
+      <Card testID="plan-explanation">
+        <Button
+          label={showExplanation ? 'Hide why this plan' : 'Why this plan?'}
+          variant="secondary"
+          onPress={() => {
+            setShowExplanation(!showExplanation);
+          }}
+          testID="toggle-explanation"
+        />
+        {showExplanation ? <PlanExplanation data={data} /> : null}
+      </Card>
       {next ? (
         <Card testID={`today-card-${next.session.id}`}>
           <Body muted>
@@ -361,3 +381,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
 });
+
+function PlanExplanation({ data }: { data: AppData }) {
+  if (!data.plan || !data.profile) {
+    return null;
+  }
+  const explanation = explainPlan(data.plan, data.profile);
+  return (
+    <>
+      {explanation.source === 'ai' ? <Badge label="AI-generated" tone="info" /> : null}
+      <Body testID="plan-explanation-text">{explanation.text}</Body>
+    </>
+  );
+}

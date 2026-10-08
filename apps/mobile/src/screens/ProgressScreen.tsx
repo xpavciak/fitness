@@ -3,7 +3,7 @@ import { formatShortDate } from '../logic/labels';
 import { adherenceSummary, exerciseProgress, type ExerciseProgress } from '../logic/progress';
 import type { AppData } from '../storage/repository';
 import { useStore } from '../state/store';
-import { Body, Card, Heading, Screen, Title } from '../ui/components';
+import { Badge, Body, Card, Heading, Screen, Title } from '../ui/components';
 import { colors, spacing } from '../ui/theme';
 
 function percent(value: number | null | undefined): string {
@@ -23,13 +23,13 @@ export function ProgressScreen({ data }: { data: AppData }) {
   }
   const summary = adherenceSummary(
     plan,
+    profile,
     data.workoutLogs,
     store.today(),
-    profile.timezone,
     data.scheduleChanges,
   );
   const exercises = exerciseProgress(data.workoutLogs, profile.timezone);
-  const { streak, thisWeek, stats } = summary;
+  const { streak, thisWeek, stats, reflection } = summary;
 
   return (
     <Screen testID="progress-screen">
@@ -59,6 +59,12 @@ export function ProgressScreen({ data }: { data: AppData }) {
       <Body muted>
         A week counts toward your streak when you complete at least 80% of its sessions.
       </Body>
+
+      <Card testID="weekly-reflection">
+        <Heading>Week {reflection.weekIndex + 1} reflection</Heading>
+        {reflection.source === 'ai' ? <Badge label="AI-generated" tone="info" /> : null}
+        <Body>{reflection.text}</Body>
+      </Card>
 
       <Heading>Weeks</Heading>
       <Card testID="weeks-table">

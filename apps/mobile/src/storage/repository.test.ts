@@ -72,6 +72,7 @@ describe('LocalRepository', () => {
       profile: outcome.profile,
       goal: outcome.goal,
       plan,
+      planNotes: null,
       workoutLogs: [first],
       scheduleChanges: [change],
     });
@@ -158,5 +159,34 @@ describe('LocalRepository: atomic setup and concurrency', () => {
     const loaded = await repo.load();
     expect(loaded.plan).toBeNull();
     expect(loaded.profile).toEqual(outcome.profile);
+  });
+});
+
+describe('LocalRepository: plan notes (generator warnings)', () => {
+  it('stores the warnings with a new plan and drops them with the plan', async () => {
+    await repo.saveSetup({
+      profile: outcome.profile,
+      goal: outcome.goal,
+      plan,
+      warnings: ['Fewer sessions so you can recover.'],
+    });
+    expect((await repo.load()).planNotes).toEqual({
+      plan_id: plan.id,
+      warnings: ['Fewer sessions so you can recover.'],
+    });
+    await repo.savePlan(plan); // in-place updates keep the notes
+    expect((await repo.load()).planNotes?.warnings).toHaveLength(1);
+    await repo.removePlan();
+    expect(await repo.load()).toMatchObject({ plan: null, planNotes: null });
+    expect(store.keys()).not.toContain(STORAGE_KEYS.planNotes);
+  });
+
+  it('ignores notes that belong to another plan', async () => {
+    await repo.saveNewPlan(plan, ['Old warning.']);
+    await store.setItem(
+      STORAGE_KEYS.planNotes,
+      JSON.stringify({ plan_id: '00000009-0000-4000-8000-000000000009', warnings: ['Stale.'] }),
+    );
+    expect((await repo.load()).planNotes).toBeNull();
   });
 });

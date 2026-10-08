@@ -3,27 +3,47 @@ import {
   type AdherenceStats,
   type ExerciseMeasure,
   type Plan,
+  type Profile,
   type ScheduleChange,
   type WeeklyStreak,
   type WorkoutLog,
 } from '@fitness/engine';
-import { adherence, e1rm, records as personalRecords } from '../engine/engine-service';
+import {
+  adherence,
+  e1rm,
+  records as personalRecords,
+  weeklyReflection,
+  type CoachText,
+} from '../engine/engine-service';
 import { exerciseName } from './labels';
 
 export interface AdherenceSummary {
   stats: AdherenceStats;
   streak: WeeklyStreak;
+  /** Coach reflection on `reflectionWeekIndex` (template provider, D5). */
+  reflection: CoachText & { weekIndex: number };
   /** Adherence of the week containing today (null when nothing is planned or the plan is not running). */
   thisWeek: { percentage: number | null; completed: number; planned: number } | null;
 }
 
+/**
+ * The week to reflect on: the current week, else the latest finished one, else the first
+ * (the plan has not started yet).
+ */
+export function reflectionWeekIndex(stats: AdherenceStats): number {
+  const current = stats.weeks.find((week) => week.status === 'current');
+  const lastPast = stats.weeks.filter((week) => week.status === 'past').at(-1);
+  return current?.week_index ?? lastPast?.week_index ?? stats.weeks[0]?.week_index ?? 0;
+}
+
 export function adherenceSummary(
   plan: Plan,
+  profile: Profile,
   logs: readonly WorkoutLog[],
   today: string,
-  timezone: string,
   changes: readonly ScheduleChange[],
 ): AdherenceSummary {
+  const { timezone } = profile;
   const { stats, streak } = adherence({
     plan,
     logs,
@@ -32,9 +52,11 @@ export function adherenceSummary(
     changes: changes.filter((change) => change.plan_id === plan.id),
   });
   const current = stats.weeks.find((week) => week.status === 'current');
+  const weekIndex = reflectionWeekIndex(stats);
   return {
     stats,
     streak,
+    reflection: { ...weeklyReflection(stats, weekIndex, profile), weekIndex },
     thisWeek: current
       ? { percentage: current.percentage, completed: current.completed, planned: current.planned }
       : null,
