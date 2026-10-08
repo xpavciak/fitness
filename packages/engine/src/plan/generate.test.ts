@@ -555,10 +555,17 @@ describe('generatePlan properties over many profiles', () => {
     }
   });
 
-  it('marks at least one key exercise per session', () => {
+  it('marks at least one key exercise per session, never a low-stimulus one when avoidable', () => {
     for (const { plan } of cases) {
       for (const session of plan.weeks.flatMap((week) => week.sessions)) {
-        expect(session.exercises.some((pe) => pe.is_key)).toBe(true);
+        const keys = session.exercises.filter((pe) => pe.is_key);
+        expect(keys.length).toBeGreaterThan(0);
+        const lowKeys = keys.filter((pe) => lookup(pe.exercise_id).low_stimulus);
+        if (lowKeys.length > 0) {
+          // Only the promoted fallback, when every exercise in the session is low stimulus.
+          expect(keys).toHaveLength(1);
+          expect(session.exercises.every((pe) => lookup(pe.exercise_id).low_stimulus)).toBe(true);
+        }
       }
     }
   });

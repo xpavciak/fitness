@@ -378,15 +378,24 @@ function draftSession(
       continue; // e.g. no biceps isolation without equipment, or every option contraindicated
     }
     used.add(exercise.id);
-    exercises.push(prescribe(exercise, slot.key === true, goal, ctx.level));
+    // A low-stimulus fallback is never a key lift (it does not count as a hard set).
+    const isKey = slot.key === true && !exercise.low_stimulus;
+    exercises.push(prescribe(exercise, isKey, goal, ctx.level));
   }
-  const first = exercises[0];
-  if (!first) {
+  if (exercises.length === 0) {
     throw new Error(`No exercise fits "${template.title}" for this equipment and limitations`);
   }
   if (!exercises.some((de) => de.is_key)) {
-    // Every key slot was filtered out: promote the first exercise so the session keeps a priority.
-    exercises[0] = prescribe(first.exercise, true, goal, ctx.level);
+    // No key slot survived: promote the first exercise that is not low stimulus (or the first
+    // one) so the session keeps a priority for shortening and merging.
+    const index = Math.max(
+      0,
+      exercises.findIndex((de) => !de.exercise.low_stimulus),
+    );
+    const promoted = exercises[index];
+    if (promoted) {
+      exercises[index] = prescribe(promoted.exercise, true, goal, ctx.level);
+    }
   }
   return { template, exercises };
 }
