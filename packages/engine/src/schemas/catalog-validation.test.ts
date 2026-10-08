@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { samples } from '../__fixtures__/samples.js';
+import { ids, samples } from '../__fixtures__/samples.js';
 import { EXERCISE_CATALOG } from '../catalog/index.js';
 import { createCatalogValidators } from './catalog-validation.js';
 
@@ -51,7 +51,7 @@ describe('createCatalogValidators', () => {
     expect(validators.PlanWeek.safeParse(week).success).toBe(false);
 
     const log = samples.workoutLog();
-    log.sets.push({ ...samples.setLog(), id: 'set-2', set_index: 1, exercise_id: 'nope' });
+    log.sets.push({ ...samples.setLog(), id: ids.other1, set_index: 1, exercise_id: 'nope' });
     expect(messagesAt(validators.WorkoutLog.safeParse(log))[0]).toMatch(/^sets\.1\.exercise_id/);
   });
 

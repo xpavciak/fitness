@@ -1,14 +1,11 @@
 import { z } from 'zod';
 import { IdSchema, IsoDateSchema, IsoDateTimeSchema } from './common.js';
 
-export const GOAL_TYPES = [
-  'strength',
-  'hypertrophy',
-  'fat_loss',
-  'general',
-  'endurance',
-  'hybrid',
-] as const;
+/**
+ * Goal types the MVP engine can serve. Endurance and hybrid (running) goals are out of
+ * MVP scope (decision D7) and will be added with the running module.
+ */
+export const GOAL_TYPES = ['strength', 'hypertrophy', 'fat_loss', 'general'] as const;
 export const GoalTypeSchema = z.enum(GOAL_TYPES);
 export type GoalType = z.infer<typeof GoalTypeSchema>;
 
@@ -16,7 +13,8 @@ export const GOAL_STATUSES = ['active', 'achieved', 'abandoned'] as const;
 export const GoalStatusSchema = z.enum(GOAL_STATUSES);
 export type GoalStatus = z.infer<typeof GoalStatusSchema>;
 
-export const GoalSchema = z.object({
+/** Goals have no cross-field rules, so the row schema is also the full schema. */
+export const GoalRowSchema = z.object({
   id: IdSchema,
   user_id: IdSchema,
   type: GoalTypeSchema,
@@ -26,4 +24,5 @@ export const GoalSchema = z.object({
   status: GoalStatusSchema,
   created_at: IsoDateTimeSchema,
 });
+export const GoalSchema = GoalRowSchema;
 export type Goal = z.infer<typeof GoalSchema>;

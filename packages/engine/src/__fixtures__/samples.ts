@@ -9,15 +9,39 @@ import type {
   WorkoutLog,
 } from '../schemas/index.js';
 
+/** Deterministic, valid v4-format UUID for test fixtures: `uuid(1)` -> `...-000000000001`. */
+export function uuid(n: number): string {
+  return `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+}
+
+/** Named fixture ids, so tests read as `ids.week` rather than raw UUIDs. */
+export const ids = {
+  user: uuid(1),
+  goal: uuid(2),
+  plan: uuid(3),
+  week: uuid(4),
+  session: uuid(5),
+  pe1: uuid(6),
+  pe2: uuid(7),
+  log: uuid(8),
+  set1: uuid(9),
+  change: uuid(10),
+  /** Ids not used by any fixture, for "other"/"new" entities in tests. */
+  other1: uuid(101),
+  other2: uuid(102),
+  other3: uuid(103),
+} as const;
+
 /** Fresh deep copies so tests can mutate freely. */
 const clone = <T>(value: T): T => structuredClone(value);
 
 const PROFILE: Profile = {
-  user_id: 'user-1',
+  user_id: ids.user,
   birth_year: 1990,
   sex: 'female',
   height_cm: 168,
   weight_kg: 64.5,
+  timezone: 'Europe/Bratislava',
   experience_level: 'beginner',
   equipment: ['dumbbells', 'bench'],
   limitations: ['knee'],
@@ -43,8 +67,8 @@ const PROFILE: Profile = {
 };
 
 const GOAL: Goal = {
-  id: 'goal-1',
-  user_id: 'user-1',
+  id: ids.goal,
+  user_id: ids.user,
   type: 'general',
   target: 'Train 3x per week for 6 weeks',
   status: 'active',
@@ -52,22 +76,25 @@ const GOAL: Goal = {
 };
 
 const PLANNED_EXERCISE: PlannedExercise = {
-  id: 'pe-1',
-  planned_session_id: 'session-1',
+  id: ids.pe1,
+  planned_session_id: ids.session,
   exercise_id: 'goblet_squat',
   order: 0,
   sets: 3,
+  measure: 'reps',
   rep_min: 8,
   rep_max: 12,
   target_rir: 3,
   target_load_kg: 12,
   rest_sec: 90,
+  is_key: true,
 };
 
+/** A one-week plan starting Monday 2026-10-05 with one session. */
 const PLAN: Plan = {
-  id: 'plan-1',
-  user_id: 'user-1',
-  goal_id: 'goal-1',
+  id: ids.plan,
+  user_id: ids.user,
+  goal_id: ids.goal,
   template_id: 'full_body_3x',
   version: 1,
   status: 'active',
@@ -76,15 +103,15 @@ const PLAN: Plan = {
   created_at: '2026-10-01T08:10:00Z',
   weeks: [
     {
-      id: 'week-1',
-      plan_id: 'plan-1',
+      id: ids.week,
+      plan_id: ids.plan,
       index: 0,
       start_date: '2026-10-05',
       phase: 'accumulation',
       sessions: [
         {
-          id: 'session-1',
-          plan_week_id: 'week-1',
+          id: ids.session,
+          plan_week_id: ids.week,
           day_index: 0,
           scheduled_date: '2026-10-05',
           title: 'Full Body A',
@@ -95,16 +122,18 @@ const PLAN: Plan = {
           exercises: [
             PLANNED_EXERCISE,
             {
-              id: 'pe-2',
-              planned_session_id: 'session-1',
+              id: ids.pe2,
+              planned_session_id: ids.session,
               exercise_id: 'push_up',
               order: 1,
               sets: 3,
+              measure: 'reps',
               rep_min: 6,
               rep_max: 12,
               target_rir: 2,
               rest_sec: 90,
               superset_group: 'A',
+              is_key: false,
             },
           ],
         },
@@ -114,11 +143,12 @@ const PLAN: Plan = {
 };
 
 const SET_LOG: SetLog = {
-  id: 'set-1',
-  workout_log_id: 'log-1',
+  id: ids.set1,
+  workout_log_id: ids.log,
   exercise_id: 'goblet_squat',
-  planned_exercise_id: 'pe-1',
+  planned_exercise_id: ids.pe1,
   set_index: 0,
+  measure: 'reps',
   reps: 10,
   load_kg: 12,
   rir: 2,
@@ -128,9 +158,9 @@ const SET_LOG: SetLog = {
 };
 
 const WORKOUT_LOG: WorkoutLog = {
-  id: 'log-1',
-  user_id: 'user-1',
-  planned_session_id: 'session-1',
+  id: ids.log,
+  user_id: ids.user,
+  planned_session_id: ids.session,
   started_at: '2026-10-05T07:00:00Z',
   ended_at: '2026-10-05T07:45:00Z',
   pre_checkin: { sleep: 4, energy: 3, soreness: 2, stress: 2 },
@@ -139,9 +169,9 @@ const WORKOUT_LOG: WorkoutLog = {
 };
 
 const SCHEDULE_CHANGE: ScheduleChange = {
-  id: 'change-1',
-  plan_id: 'plan-1',
-  planned_session_id: 'session-1',
+  id: ids.change,
+  plan_id: ids.plan,
+  planned_session_id: ids.session,
   kind: 'move',
   reason: 'You missed Monday, so Full Body A moves to Tuesday.',
   from_date: '2026-10-05',
@@ -164,6 +194,7 @@ const EXERCISE: Exercise = {
   measure: 'reps',
   loadable: true,
   unilateral: false,
+  low_stimulus: false,
 };
 
 export const samples = {

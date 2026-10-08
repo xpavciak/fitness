@@ -15,58 +15,64 @@ export type ChangeAuthor = z.infer<typeof ChangeAuthorSchema>;
  * - merge:   `merged_into_session_id` required (the session absorbing this one).
  * - shorten: `new_est_minutes` required.
  * - skip:    no target fields.
+ *
+ * In the MVP rescheduling never crosses a week boundary: `to_date` stays within the week
+ * of `from_date` (the plan schema enforces this on the resulting session dates).
  */
-export const ScheduleChangeSchema = z
-  .object({
-    id: IdSchema,
-    plan_id: IdSchema,
-    planned_session_id: IdSchema,
-    kind: ScheduleChangeKindSchema,
-    /** Plain-language explanation shown to the user. */
-    reason: z.string().trim().min(1).max(500),
-    from_date: IsoDateSchema,
-    to_date: IsoDateSchema.optional(),
-    merged_into_session_id: IdSchema.optional(),
-    new_est_minutes: z.int().min(1).max(240).optional(),
-    created_by: ChangeAuthorSchema,
-    created_at: IsoDateTimeSchema,
-  })
-  .superRefine((change, ctx) => {
-    const require = (field: 'to_date' | 'merged_into_session_id' | 'new_est_minutes') => {
-      if (change[field] === undefined) {
+export const ScheduleChangeRowSchema = z.object({
+  id: IdSchema,
+  plan_id: IdSchema,
+  planned_session_id: IdSchema,
+  kind: ScheduleChangeKindSchema,
+  /** Plain-language explanation shown to the user. */
+  reason: z.string().trim().min(1).max(500),
+  from_date: IsoDateSchema,
+  to_date: IsoDateSchema.optional(),
+  merged_into_session_id: IdSchema.optional(),
+  new_est_minutes: z.int().min(1).max(240).optional(),
+  created_by: ChangeAuthorSchema,
+  created_at: IsoDateTimeSchema,
+});
+export type ScheduleChangeRow = z.infer<typeof ScheduleChangeRowSchema>;
+
+export function checkScheduleChange(change: ScheduleChangeRow, ctx: z.RefinementCtx): void {
+  const require = (field: 'to_date' | 'merged_into_session_id' | 'new_est_minutes') => {
+    if (change[field] === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [field],
+        message: `${field} is required for a "${change.kind}" change`,
+      });
+    }
+  };
+  switch (change.kind) {
+    case 'move':
+      require('to_date');
+      if (change.to_date !== undefined && change.to_date === change.from_date) {
         ctx.addIssue({
           code: 'custom',
-          path: [field],
-          message: `${field} is required for a "${change.kind}" change`,
+          path: ['to_date'],
+          message: 'A move must change the date',
         });
       }
-    };
-    switch (change.kind) {
-      case 'move':
-        require('to_date');
-        if (change.to_date !== undefined && change.to_date === change.from_date) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['to_date'],
-            message: 'A move must change the date',
-          });
-        }
-        break;
-      case 'merge':
-        require('merged_into_session_id');
-        if (change.merged_into_session_id === change.planned_session_id) {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['merged_into_session_id'],
-            message: 'A session cannot be merged into itself',
-          });
-        }
-        break;
-      case 'shorten':
-        require('new_est_minutes');
-        break;
-      case 'skip':
-        break;
-    }
-  });
+      break;
+    case 'merge':
+      require('merged_into_session_id');
+      if (change.merged_into_session_id === change.planned_session_id) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['merged_into_session_id'],
+          message: 'A session cannot be merged into itself',
+        });
+      }
+      break;
+    case 'shorten':
+      require('new_est_minutes');
+      break;
+    case 'skip':
+      break;
+  }
+}
+
+export const ScheduleChangeSchema = ScheduleChangeRowSchema.superRefine(checkScheduleChange);
 export type ScheduleChange = z.infer<typeof ScheduleChangeSchema>;

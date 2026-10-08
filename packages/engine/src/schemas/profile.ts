@@ -5,11 +5,13 @@ import {
   ExperienceLevelSchema,
   IdSchema,
   IsoDateTimeSchema,
+  type IsoDate,
   TimeOfDaySchema,
   WeekdaySchema,
   hasNoDuplicates,
   uniqueArray,
 } from './common.js';
+import { isValidTimeZone } from '../dates.js';
 
 /**
  * PAR-Q+ (2023) general health questions. `true` means the user answered "yes".
@@ -74,53 +76,88 @@ export type Sex = z.infer<typeof SexSchema>;
 export const MIN_SESSION_MINUTES = 10;
 export const MAX_SESSION_MINUTES = 180;
 
-export const ProfileSchema = z
-  .object({
-    user_id: IdSchema,
-    birth_year: z.int().min(1900).max(2100),
-    sex: SexSchema.optional(),
-    height_cm: z.number().min(100).max(250).optional(),
-    weight_kg: z.number().min(25).max(350).optional(),
-    experience_level: ExperienceLevelSchema,
-    /** Equipment the user has access to. `bodyweight` is always implied. */
-    equipment: uniqueArray(EquipmentSchema),
-    /** Body regions to protect; contraindicated exercises are filtered out. */
-    limitations: uniqueArray(BodyRegionSchema),
-    /** Optional free text about limitations (never sent to an LLM unredacted). */
-    limitation_notes: z.string().max(500).optional(),
-    days_per_week: z.int().min(1).max(7),
-    /** Days the user could train. Must offer at least `days_per_week` days. */
-    available_days: uniqueArray(WeekdaySchema).min(1),
-    session_minutes: z.int().min(MIN_SESSION_MINUTES).max(MAX_SESSION_MINUTES),
-    /** Implementation intention: preferred day, time and place for each session. */
-    training_slots: z.array(TrainingSlotSchema).max(7),
-    parq: ParqAnswersSchema,
-    consent_health_at: IsoDateTimeSchema,
-  })
-  .superRefine((profile, ctx) => {
-    if (profile.available_days.length < profile.days_per_week) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['available_days'],
-        message: `available_days must contain at least days_per_week (${profile.days_per_week}) days`,
-      });
-    }
-    const slotDays = profile.training_slots.map((slot) => slot.day);
-    if (!hasNoDuplicates(slotDays)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['training_slots'],
-        message: 'training_slots must have at most one slot per day',
-      });
-    }
-    profile.training_slots.forEach((slot, index) => {
-      if (!profile.available_days.includes(slot.day)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['training_slots', index, 'day'],
-          message: `Slot day "${slot.day}" is not in available_days`,
-        });
-      }
+/** Flat, unrefined profile row (safe for `.omit()`/`.partial()` in forms and storage). */
+export const ProfileRowSchema = z.object({
+  user_id: IdSchema,
+  birth_year: z.int().min(1900).max(2100),
+  sex: SexSchema.optional(),
+  height_cm: z.number().min(100).max(250).optional(),
+  weight_kg: z.number().min(25).max(350).optional(),
+  /** IANA time zone, e.g. `Europe/Bratislava`. Used to interpret dates and reminder times. */
+  timezone: z.string().refine(isValidTimeZone, { message: 'Unknown IANA time zone' }),
+  experience_level: ExperienceLevelSchema,
+  /** Equipment the user has access to. `bodyweight` is always implied. */
+  equipment: uniqueArray(EquipmentSchema),
+  /** Body regions to protect; contraindicated exercises are filtered out. */
+  limitations: uniqueArray(BodyRegionSchema),
+  /** Optional free text about limitations (never sent to an LLM unredacted). */
+  limitation_notes: z.string().max(500).optional(),
+  days_per_week: z.int().min(1).max(7),
+  /** Days the user could train. Must offer at least `days_per_week` days. */
+  available_days: uniqueArray(WeekdaySchema).min(1),
+  session_minutes: z.int().min(MIN_SESSION_MINUTES).max(MAX_SESSION_MINUTES),
+  /** Implementation intention: preferred day, time and place for each session. */
+  training_slots: z.array(TrainingSlotSchema).max(7),
+  parq: ParqAnswersSchema,
+  consent_health_at: IsoDateTimeSchema,
+});
+export type ProfileRow = z.infer<typeof ProfileRowSchema>;
+
+/**
+ * Cross-field profile rules. Exported so derived schemas (e.g. form schemas built with
+ * `ProfileRowSchema.omit(...)`) can re-apply them.
+ *
+ * `birth_year` is compared with the current UTC year at parse time.
+ */
+export function checkProfile(
+  profile: Pick<ProfileRow, 'birth_year' | 'available_days' | 'days_per_week' | 'training_slots'>,
+  ctx: z.RefinementCtx,
+): void {
+  if (profile.birth_year > new Date().getUTCFullYear()) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['birth_year'],
+      message: 'birth_year must not be in the future',
     });
+  }
+  if (profile.available_days.length < profile.days_per_week) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['available_days'],
+      message: `available_days must contain at least days_per_week (${profile.days_per_week}) days`,
+    });
+  }
+  const slotDays = profile.training_slots.map((slot) => slot.day);
+  if (!hasNoDuplicates(slotDays)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['training_slots'],
+      message: 'training_slots must have at most one slot per day',
+    });
+  }
+  profile.training_slots.forEach((slot, index) => {
+    if (!profile.available_days.includes(slot.day)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['training_slots', index, 'day'],
+        message: `Slot day "${slot.day}" is not in available_days`,
+      });
+    }
   });
+}
+
+export const ProfileSchema = ProfileRowSchema.superRefine(checkProfile);
 export type Profile = z.infer<typeof ProfileSchema>;
+
+/**
+ * Age reached during the calendar year of `date` (`YYYY-MM-DD`). Only the birth year is
+ * stored, so the true age may be one year lower until the birthday. Age gates (T4) should
+ * treat this as an upper bound.
+ */
+export function ageOn(profile: Pick<Profile, 'birth_year'>, date: IsoDate): number {
+  const year = Number(date.slice(0, 4));
+  if (!Number.isInteger(year) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new RangeError(`Invalid calendar date "${date}" (expected YYYY-MM-DD)`);
+  }
+  return year - profile.birth_year;
+}

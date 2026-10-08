@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +27,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      # Library packages are built first so workspace consumers (e.g. apps/mobile) resolve
+      # their `dist` types during type-aware lint and typecheck.
+      - run: pnpm build:packages
       - run: pnpm lint
       - run: pnpm format:check
       - run: pnpm typecheck

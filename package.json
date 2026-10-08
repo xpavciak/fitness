@@ -8,7 +8,8 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present run build",
-    "typecheck": "pnpm -r --if-present run typecheck",
+    "build:packages": "pnpm --filter \"./packages/**\" run build",
+    "typecheck": "pnpm run build:packages && pnpm -r --if-present run typecheck",
     "lint": "eslint .",
     "test": "pnpm -r --if-present run test",
     "format": "prettier --write .",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { samples } from '../__fixtures__/samples.js';
+import { ids, samples } from '../__fixtures__/samples.js';
 import {
   ExerciseSchema,
   GoalSchema,
@@ -77,7 +77,7 @@ describe('SetLog / WorkoutLog', () => {
     const log = { ...samples.workoutLog(), ended_at: '2026-10-05T06:00:00Z' };
     expect(issuePaths(WorkoutLogSchema, log)).toContain('ended_at');
     const orphan = samples.workoutLog();
-    orphan.sets[0] = { ...samples.setLog(), workout_log_id: 'other-log' };
+    orphan.sets[0] = { ...samples.setLog(), workout_log_id: ids.other1 };
     expect(issuePaths(WorkoutLogSchema, orphan)).toContain('sets.0.workout_log_id');
   });
 

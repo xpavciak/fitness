@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
-import { samples } from '../__fixtures__/samples.js';
+import { ids, samples } from '../__fixtures__/samples.js';
 import { EXERCISE_CATALOG } from '../catalog/index.js';
 import {
   GoalSchema,
@@ -75,8 +75,10 @@ describe('empty and whitespace-only strings', () => {
     }
   });
 
-  it('accepts unicode in free-text ids', () => {
-    accepts(IdSchema, 'užívateľ-1');
+  it('accepts UUIDs and rejects free-text entity ids (ids are client-generated UUIDs)', () => {
+    accepts(IdSchema, ids.user);
+    rejects(IdSchema, 'užívateľ-1');
+    rejects(IdSchema, 'week-1');
   });
 });
 
@@ -172,9 +174,9 @@ describe('mismatched parent ids', () => {
     const session = week?.sessions[0];
     const exercise = session?.exercises[1];
     if (!week || !session || !exercise) throw new Error('fixture shape changed');
-    week.plan_id = 'other-plan';
-    session.plan_week_id = 'other-week';
-    exercise.planned_session_id = 'other-session';
+    week.plan_id = ids.other1;
+    session.plan_week_id = ids.other2;
+    exercise.planned_session_id = ids.other3;
     expect(rejects(PlanSchema, plan).sort()).toEqual([
       'weeks.0.plan_id',
       'weeks.0.sessions.0.exercises.1.planned_session_id',
@@ -184,18 +186,21 @@ describe('mismatched parent ids', () => {
 
   it('rejects a set whose workout_log_id differs from its log', () => {
     const log = samples.workoutLog();
-    log.sets.push({ ...samples.setLog(), id: 'set-2', set_index: 1, workout_log_id: 'log-2' });
+    log.sets.push({
+      ...samples.setLog(),
+      id: ids.other1,
+      set_index: 1,
+      workout_log_id: ids.other2,
+    });
     expect(rejects(WorkoutLogSchema, log)).toEqual(['sets.1.workout_log_id']);
   });
 
-  it('treats ids that differ only by surrounding whitespace as equal (ids are trimmed)', () => {
+  it('rejects ids with surrounding whitespace (UUIDs are not trimmed)', () => {
     const plan = samples.plan();
     const session = plan.weeks[0]?.sessions[0];
     if (!session) throw new Error('fixture shape changed');
-    session.plan_week_id = ' week-1 ';
-    const result = PlanSchema.safeParse(plan);
-    expect(result.success).toBe(true);
-    expect(result.data?.weeks[0]?.sessions[0]?.plan_week_id).toBe('week-1');
+    session.plan_week_id = ` ${ids.week} `;
+    expect(rejects(PlanSchema, plan)).toContain('weeks.0.sessions.0.plan_week_id');
   });
 });
 
@@ -211,60 +216,80 @@ describe('catalog validators', () => {
 
   it('accepts every catalog id', () => {
     for (const exercise of EXERCISE_CATALOG) {
+      const { target_load_kg: load, ...base } = samples.plannedExercise();
       accepts(validators.PlannedExercise, {
-        ...samples.plannedExercise(),
+        ...base,
+        ...(exercise.loadable ? { target_load_kg: load } : {}),
         exercise_id: exercise.id,
+        measure: exercise.measure,
       });
     }
   });
 });
 
 /**
- * KNOWN GAPS (minor): these document behaviour the schemas do not enforce yet.
- * They are written as `it.fails`, so they pass while the gap exists and fail
- * (prompting removal of `.fails`) once the schema is fixed.
+ * Formerly KNOWN GAPS (QA batch 1, written as `it.fails`). Fixed in the batch 1 rework,
+ * so these are now regular tests.
  */
-describe('known gaps', () => {
-  it.fails('BUG: rejects duplicate session ids within a week', () => {
+describe('fixed gaps: duplicate ids and week alignment', () => {
+  function messages(schema: z.ZodType, value: unknown): string[] {
+    const result = schema.safeParse(value);
+    expect(result.success).toBe(false);
+    return result.success
+      ? []
+      : result.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`);
+  }
+
+  it('rejects duplicate session ids within a week', () => {
     const plan = samples.plan();
     const week = plan.weeks[0];
     const session = week?.sessions[0];
     if (!week || !session) throw new Error('fixture shape changed');
     week.sessions.push(structuredClone(session));
-    rejects(PlanSchema, plan);
+    expect(messages(PlanSchema, plan)).toContain(
+      `weeks.0.sessions: Duplicate session ids: ${ids.session}`,
+    );
   });
 
-  it.fails('BUG: rejects duplicate planned exercise ids within a session', () => {
+  it('rejects duplicate planned exercise ids within a session', () => {
     const plan = samples.plan();
     const session = plan.weeks[0]?.sessions[0];
     const second = session?.exercises[1];
     if (!second) throw new Error('fixture shape changed');
-    second.id = 'pe-1';
-    rejects(PlanSchema, plan);
+    second.id = ids.pe1;
+    expect(messages(PlanSchema, plan)).toContain(
+      `weeks.0.sessions.0.exercises: Duplicate planned exercise ids: ${ids.pe1}`,
+    );
   });
 
-  it.fails('BUG: rejects duplicate week ids within a plan', () => {
+  it('rejects duplicate week ids within a plan', () => {
     const plan = samples.plan();
     const week = plan.weeks[0];
     if (!week) throw new Error('fixture shape changed');
-    plan.weeks.push({ ...structuredClone(week), index: 1, start_date: '2026-10-12' });
-    rejects(PlanSchema, plan);
+    // A structurally valid second week (dates shifted) that reuses the first week's id.
+    const copy = structuredClone(week);
+    copy.index = 1;
+    copy.start_date = '2026-10-12';
+    copy.sessions = [];
+    plan.weeks.push(copy);
+    expect(messages(PlanSchema, plan)).toEqual([`weeks: Duplicate week ids: ${ids.week}`]);
   });
 
-  it.fails('BUG: rejects duplicate set ids within a workout log', () => {
+  it('rejects duplicate set ids within a workout log', () => {
     const log = samples.workoutLog();
     log.sets.push({ ...samples.setLog(), set_index: 1 });
-    rejects(WorkoutLogSchema, log);
+    expect(messages(WorkoutLogSchema, log)).toEqual([`sets: Duplicate set ids: ${ids.set1}`]);
   });
 
-  it.fails(
-    'BUG: rejects a week start_date that is not a Monday (documented as "Monday of this week")',
-    () => {
-      const plan = samples.plan();
-      const week = plan.weeks[0];
-      if (!week) throw new Error('fixture shape changed');
-      week.start_date = '2026-10-06'; // Tuesday
-      rejects(PlanSchema, plan);
-    },
-  );
+  it('rejects a week start_date that is not a Monday', () => {
+    const plan = samples.plan();
+    const week = plan.weeks[0];
+    if (!week) throw new Error('fixture shape changed');
+    week.start_date = '2026-10-06'; // Tuesday
+    plan.start_date = '2026-10-06';
+    week.sessions.forEach((session) => (session.scheduled_date = '2026-10-06'));
+    expect(messages(PlanSchema, plan)).toEqual([
+      'weeks.0.start_date: Week start_date must be a Monday',
+    ]);
+  });
 });
