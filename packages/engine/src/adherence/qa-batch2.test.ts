@@ -75,7 +75,7 @@ describe('QA batch 2: adherence across the October DST change', () => {
     log('2026-11-06T17:00:00Z', s(3, 2).id), // Wed of week 3 is missed
     log('2026-11-09T17:00:00Z', s(4, 0).id),
   ];
-  const stats = adherenceStats(plan, logs, '2026-11-11', TZ, changes);
+  const stats = adherenceStats(plan, logs, { today: '2026-11-11', timezone: TZ, changes });
   const summary = stats.weeks.map((w) => [
     w.status,
     w.completed,
@@ -90,21 +90,21 @@ describe('QA batch 2: adherence across the October DST change', () => {
     expect(summary).toEqual([
       ['past', 3, 0, 0, 0, 100, 0],
       ['past', 3, 0, 0, 0, 100, 3],
-      ['past', 2, 0, 1, 0, 67, 1], // merged Monday completes with Wednesday
+      ['past', 2, 0, 1, 0, 100, 1], // merged Monday completes with Wednesday; skip is neutral (D11)
       ['past', 2, 1, 0, 0, 67, 0],
       ['current', 1, 0, 0, 2, 33, 0], // today (Wednesday) is still upcoming
       ['future', 0, 0, 0, 3, 0, 0],
     ]);
-    expect(stats.overall).toEqual({ due: 13, completed: 11, percentage: 85 });
+    expect(stats.overall).toEqual({ due: 12, completed: 11, percentage: 92 });
   });
 
   it('buckets differently in UTC, proving the zone is applied', () => {
-    const utc = adherenceStats(plan, logs, '2026-11-11', 'UTC', changes);
+    const utc = adherenceStats(plan, logs, { today: '2026-11-11', timezone: 'UTC', changes });
     expect(utc.weeks.map((w) => w.unplanned_workouts).slice(1, 3)).toEqual([4, 0]);
   });
 
-  it('streaks: 2 weeks then broken at 80%; minSessions 2 keeps the run going', () => {
-    expect(weeklyStreak(stats)).toEqual({ current: 0, best: 2, current_week_met: false });
+  it('streaks: 3 weeks (the skip is neutral, D11) then broken at 80%; minSessions 2 keeps it going', () => {
+    expect(weeklyStreak(stats)).toEqual({ current: 0, best: 3, current_week_met: false });
     expect(weeklyStreak(stats, { minSessions: 2 })).toEqual({
       current: 4,
       best: 4,
@@ -113,12 +113,16 @@ describe('QA batch 2: adherence across the October DST change', () => {
   });
 
   it('without the merge change the merged Monday counts as missed', () => {
-    const withoutChanges = adherenceStats(plan, logs, '2026-11-11', TZ);
+    const withoutChanges = adherenceStats(plan, logs, {
+      today: '2026-11-11',
+      timezone: TZ,
+      changes: [],
+    });
     expect(withoutChanges.weeks[2]).toMatchObject({ completed: 1, missed: 1, skipped: 1 });
   });
 
   it('on the DST Sunday itself, week 1 is current and week 2 is future', () => {
-    const onDst = adherenceStats(plan, logs, '2026-10-25', TZ, changes);
+    const onDst = adherenceStats(plan, logs, { today: '2026-10-25', timezone: TZ, changes });
     expect(onDst.weeks.map((w) => w.status).slice(0, 3)).toEqual(['past', 'current', 'future']);
     expect(weeklyStreak(onDst)).toEqual({ current: 2, best: 2, current_week_met: true });
   });

@@ -37,16 +37,17 @@ describe('adherenceStats', () => {
     const logs = [
       log({ planned_session_id: session(plan, 0, 1).id, started_at: '2026-10-14T16:30:00Z' }),
     ];
-    const stats = adherenceStats(plan, logs, '2026-10-21', TZ);
+    const stats = adherenceStats(plan, logs, { today: '2026-10-21', timezone: TZ, changes: [] });
     const [week0, week1, week2] = stats.weeks;
+    // D11: the skipped session is neutral, so week 0 is 2 of 2 planned.
     expect(week0).toMatchObject({
       status: 'past',
-      planned: 3,
+      planned: 2,
       completed: 2,
       skipped: 1,
       missed: 0,
       upcoming: 0,
-      percentage: 67,
+      percentage: 100,
     });
     // Today is Wednesday: Monday is missed, Wednesday (today) and the moved Saturday are upcoming.
     expect(week1).toMatchObject({
@@ -58,7 +59,37 @@ describe('adherenceStats', () => {
       percentage: 0,
     });
     expect(week2).toMatchObject({ status: 'future', planned: 3, upcoming: 3, missed: 0 });
-    expect(stats.overall).toEqual({ due: 4, completed: 2, percentage: 50 });
+    expect(stats.overall).toEqual({ due: 3, completed: 2, percentage: 67 });
+  });
+
+  it('D11: skipped sessions never count against adherence or break a streak', () => {
+    const plan = structuredClone(basePlan);
+    for (const session of must(plan.weeks[0]).sessions) {
+      session.status = 'done';
+    }
+    for (const session of must(plan.weeks[1]).sessions) {
+      session.status = 'skipped';
+    }
+    for (const session of must(plan.weeks[2]).sessions.slice(0, 2)) {
+      session.status = 'done';
+    }
+    must(must(plan.weeks[2]).sessions[2]).status = 'skipped';
+    const stats = adherenceStats(plan, [], { today: '2026-11-02', timezone: TZ, changes: [] });
+    expect(
+      stats.weeks.slice(0, 3).map((w) => [w.planned, w.completed, w.skipped, w.percentage]),
+    ).toEqual([
+      [3, 3, 0, 100],
+      [0, 0, 3, null],
+      [2, 2, 1, 100],
+    ]);
+    expect(stats.overall).toEqual({ due: 5, completed: 5, percentage: 100 });
+    expect(weeklyStreak(stats)).toEqual({ current: 2, best: 2, current_week_met: false });
+  });
+
+  it('requires changes (pass [] explicitly)', () => {
+    expect(() =>
+      adherenceStats(basePlan, [], { today: '2026-10-21', timezone: TZ } as never),
+    ).toThrow(/changes is required/);
   });
 
   it('counts a merged session as completed through the absorbing session', () => {
@@ -77,18 +108,26 @@ describe('adherenceStats', () => {
     const { to_date: _drop, ...mergeChange } = change;
 
     absorbing.status = 'done';
-    expect(adherenceStats(plan, [], '2026-10-19', TZ, [mergeChange]).weeks[0]).toMatchObject({
+    expect(
+      adherenceStats(plan, [], { today: '2026-10-19', timezone: TZ, changes: [mergeChange] })
+        .weeks[0],
+    ).toMatchObject({
       planned: 3,
       completed: 2,
       missed: 1,
     });
     absorbing.status = 'planned'; // absorbing session on Wednesday, today Tuesday: both upcoming
-    expect(adherenceStats(plan, [], '2026-10-13', TZ, [mergeChange]).weeks[0]).toMatchObject({
+    expect(
+      adherenceStats(plan, [], { today: '2026-10-13', timezone: TZ, changes: [mergeChange] })
+        .weeks[0],
+    ).toMatchObject({
       upcoming: 3,
       missed: 0,
     });
     // Without the change record the merged Monday session is missed once Monday has passed.
-    expect(adherenceStats(plan, [], '2026-10-13', TZ).weeks[0]).toMatchObject({
+    expect(
+      adherenceStats(plan, [], { today: '2026-10-13', timezone: TZ, changes: [] }).weeks[0],
+    ).toMatchObject({
       missed: 1,
       upcoming: 2,
     });
@@ -97,34 +136,56 @@ describe('adherenceStats', () => {
   it('buckets unplanned workouts into weeks by the profile time zone', () => {
     // Sunday 23:30 UTC is already Monday 01:30 in Bratislava (next week).
     const logs = [log({ started_at: '2026-10-18T23:30:00Z' })];
-    const local = adherenceStats(basePlan, logs, '2026-10-21', TZ);
+    const local = adherenceStats(basePlan, logs, {
+      today: '2026-10-21',
+      timezone: TZ,
+      changes: [],
+    });
     expect(local.weeks.map((w) => w.unplanned_workouts)).toEqual([0, 1, 0, 0, 0, 0]);
-    const utc = adherenceStats(basePlan, logs, '2026-10-21', 'UTC');
+    const utc = adherenceStats(basePlan, logs, {
+      today: '2026-10-21',
+      timezone: 'UTC',
+      changes: [],
+    });
     expect(utc.weeks.map((w) => w.unplanned_workouts)).toEqual([1, 0, 0, 0, 0, 0]);
   });
 
   it('treats logs for sessions of another plan as unplanned', () => {
     const logs = [log({ planned_session_id: uuid(999_999), started_at: '2026-10-13T08:00:00Z' })];
-    const stats = adherenceStats(basePlan, logs, '2026-10-21', TZ);
+    const stats = adherenceStats(basePlan, logs, {
+      today: '2026-10-21',
+      timezone: TZ,
+      changes: [],
+    });
     expect(must(stats.weeks[0])).toMatchObject({ completed: 0, unplanned_workouts: 1 });
   });
 
   it('reports null percentages when nothing is due', () => {
-    const stats = adherenceStats(basePlan, [], '2026-10-01', TZ);
+    const stats = adherenceStats(basePlan, [], { today: '2026-10-01', timezone: TZ, changes: [] });
     expect(stats.overall).toEqual({ due: 0, completed: 0, percentage: null });
     expect(stats.weeks.every((w) => w.status === 'future')).toBe(true);
   });
 
   it('rejects an unknown time zone or invalid input', () => {
-    expect(() => adherenceStats(basePlan, [], '2026-10-21', 'Mars/Base')).toThrow(RangeError);
-    expect(() => adherenceStats(basePlan, [], '21.10.2026', TZ)).toThrow();
-    expect(() => adherenceStats({ ...basePlan, weeks: [] }, [], '2026-10-21', TZ)).toThrow();
+    expect(() =>
+      adherenceStats(basePlan, [], { today: '2026-10-21', timezone: 'Mars/Base', changes: [] }),
+    ).toThrow(RangeError);
+    expect(() =>
+      adherenceStats(basePlan, [], { today: '21.10.2026', timezone: TZ, changes: [] }),
+    ).toThrow();
+    expect(() =>
+      adherenceStats({ ...basePlan, weeks: [] }, [], {
+        today: '2026-10-21',
+        timezone: TZ,
+        changes: [],
+      }),
+    ).toThrow();
   });
 
   it('is deterministic', () => {
-    expect(adherenceStats(basePlan, [], '2026-11-30', TZ)).toEqual(
-      adherenceStats(basePlan, [], '2026-11-30', TZ),
-    );
+    expect(
+      adherenceStats(basePlan, [], { today: '2026-11-30', timezone: TZ, changes: [] }),
+    ).toEqual(adherenceStats(basePlan, [], { today: '2026-11-30', timezone: TZ, changes: [] }));
   });
 });
 
@@ -224,7 +285,9 @@ describe('weeklyStreak', () => {
     for (const s of [...must(plan.weeks[0]).sessions, ...must(plan.weeks[1]).sessions]) {
       s.status = 'done';
     }
-    const result = weeklyStreak(adherenceStats(plan, [], '2026-10-27', TZ));
+    const result = weeklyStreak(
+      adherenceStats(plan, [], { today: '2026-10-27', timezone: TZ, changes: [] }),
+    );
     expect(result).toEqual({ current: 2, best: 2, current_week_met: false });
   });
 

@@ -22,10 +22,11 @@ export interface WeekAdherence {
   week_index: number;
   start_date: IsoDate;
   status: WeekStatus;
-  /** Every session counts as planned, whatever its status. */
+  /** Sessions that count: every session except skipped ones (D11: skips are neutral). */
   planned: number;
   completed: number;
   missed: number;
+  /** Skipped sessions (user-chosen or system-proposed); informational, not in `planned`. */
   skipped: number;
   /** Not done yet and dated today or later. */
   upcoming: number;
@@ -40,17 +41,32 @@ export interface AdherenceStats {
   timezone: string;
   weeks: WeekAdherence[];
   /**
-   * Adherence so far: completed / (completed + missed + skipped) over all weeks, i.e. upcoming
-   * sessions are not counted yet. `percentage` is null when nothing is due yet.
+   * Adherence so far: completed / (completed + missed) over all weeks; upcoming sessions are not
+   * counted yet and skipped ones are neutral. `percentage` is null when nothing is due yet.
    */
   overall: { due: number; completed: number; percentage: number | null };
 }
 
+export interface AdherenceOptions {
+  /** The user's local date. */
+  today: IsoDate;
+  /** The profile's IANA time zone, used to bucket workout logs into weeks. */
+  timezone: string;
+  /**
+   * The plan's schedule changes (required, pass [] when there are none): merge changes tell
+   * which session absorbed a merged one.
+   */
+  changes: readonly ScheduleChange[];
+}
+
 /**
- * Weekly adherence for a plan (feature D). Session semantics follow `SESSION_STATUSES`:
+ * Weekly adherence for a plan (feature D). Session semantics follow `SESSION_STATUSES`, with
+ * decision D11 for skips:
  * - completed: status `done`, or any workout log linked to the session (`planned_session_id`),
  *   which also covers logs that synced before the status was updated;
- * - `moved` counts as planned until it is done; `skipped` counts as planned, not completed;
+ * - `moved` counts as planned until it is done;
+ * - `skipped` (user-chosen or system-proposed) is neutral: not planned, not missed, and it never
+ *   breaks a streak; it is reported separately in `skipped`;
  * - `merged` counts as completed when the absorbing session (from the merge ScheduleChange in
  *   `changes`) is completed, otherwise it shares the absorbing session's outcome; without a
  *   known absorbing session it is missed once its own date has passed;
@@ -61,17 +77,19 @@ export interface AdherenceStats {
 export function adherenceStats(
   planInput: Plan,
   logsInput: readonly WorkoutLog[],
-  todayInput: IsoDate,
-  timezone: string,
-  changesInput: readonly ScheduleChange[] = [],
+  opts: AdherenceOptions,
 ): AdherenceStats {
   const plan = PlanSchema.parse(planInput);
   const logs = logsInput.map((log) => WorkoutLogSchema.parse(log));
-  const today = IsoDateSchema.parse(todayInput);
+  const today = IsoDateSchema.parse(opts.today);
+  const { timezone } = opts;
   if (!isValidTimeZone(timezone)) {
     throw new RangeError(`Unknown IANA time zone "${timezone}"`);
   }
-  const changes = changesInput.map((change) => ScheduleChangeSchema.parse(change));
+  if (!Array.isArray(opts.changes)) {
+    throw new TypeError('changes is required (pass [] when there are none)');
+  }
+  const changes = opts.changes.map((change) => ScheduleChangeSchema.parse(change));
 
   const sessions = new Map(plan.weeks.flatMap((week) => week.sessions).map((s) => [s.id, s]));
   const logged = new Set(
@@ -115,7 +133,7 @@ export function adherenceStats(
     for (const session of week.sessions) {
       counts[outcome(session)] += 1;
     }
-    const planned = week.sessions.length;
+    const planned = week.sessions.length - counts.skipped;
     return {
       week_index: week.index,
       start_date: week.start_date,
@@ -128,7 +146,7 @@ export function adherenceStats(
   });
 
   const completed = weeks.reduce((sum, week) => sum + week.completed, 0);
-  const due = weeks.reduce((sum, week) => sum + week.completed + week.missed + week.skipped, 0);
+  const due = weeks.reduce((sum, week) => sum + week.completed + week.missed, 0);
   return {
     today,
     timezone,
@@ -173,7 +191,8 @@ export interface WeeklyStreak {
  * Weekly streak (feature D, research 3.2: weekly, not daily). A week qualifies when
  * completed / planned >= `threshold`, or completed + unplanned workouts >= `minSessions`.
  * The current week only counts once it qualifies and never breaks the streak before it is over.
- * Weeks with nothing planned are neutral: they neither extend nor break the streak.
+ * Weeks with nothing planned (including weeks where every session was skipped, D11) are neutral:
+ * they neither extend nor break the streak. Skipped sessions never count against a week.
  */
 export function weeklyStreak(stats: AdherenceStats, opts: WeeklyStreakOptions = {}): WeeklyStreak {
   const threshold = opts.threshold ?? DEFAULT_STREAK_THRESHOLD;

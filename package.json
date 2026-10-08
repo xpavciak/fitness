@@ -10,7 +10,7 @@
     "build": "pnpm -r --if-present run build",
     "build:packages": "pnpm --filter \"./packages/**\" run build",
     "typecheck": "pnpm run build:packages && pnpm -r --if-present run typecheck && tsc -p supabase/tsconfig.json",
-    "lint": "eslint .",
+    "lint": "pnpm run build:packages && eslint .",
     "test": "pnpm -r --if-present run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
