@@ -28,12 +28,14 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 | D6 | Budget | Free tiers only | Default until the user says otherwise. |
 | D7 | Wearables, chat coach, running module, marketplace | Out of MVP scope (later phases) | Per the research roadmap. |
 
+| D8 | Delegation mechanism for T1–T11 | **Open, needs user decision** | The boss session that received the go-ahead has no Agent tool. Options: (a) rerun as the main thread with `claude --agent boss` so that `Agent(developer, reviewer, qa)` is available; (b) the user allows the boss to start `claude -p --agent <name>` subprocesses via Bash (this needs a non-interactive permission mode, which only the user can grant); (c) the user explicitly waives the role split and C5. |
+
 ## Tasks
 
 | ID | Task | Status | Notes |
 |----|------|--------|-------|
-| T0 | Translate the research doc to English (`docs/research/fitness-app-options.md`) | todo | |
-| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | todo | |
+| T0 | Translate the research doc to English (`docs/research/fitness-app-options.md`) | done (no agent review) | Translated by the boss agent (documentation, not production code). Reviewer/QA were not run because no agent-delegation tool was available. |
+| T1 | Monorepo, tooling (TS, lint, test runner) and CI workflow | blocked | Blocker B1: the boss session has no Agent/Task tool, so it can't delegate to the developer/reviewer/qa agents. |
 | T2 | Zod schemas for the domain model | todo | |
 | T3 | Exercise catalog (~80–120 exercises) | todo | |
 | T4 | `generatePlan`, templates and the PAR-Q+ gate | todo | Feature A |
@@ -48,3 +50,4 @@ Source analysis: `docs/research/fitness-app-moznosti.md`.
 ## Log
 
 - 2026-10-08: Research done (boss agent). The user chose English. Decisions D2–D7 follow the boss agent's recommendations.
+- 2026-10-08: T0 done (English research doc). T1–T11 blocked: the boss session has no agent-delegation tool and must not write production code itself. Escalated to the user (D8).
