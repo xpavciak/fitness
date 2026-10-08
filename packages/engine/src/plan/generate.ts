@@ -36,6 +36,8 @@ import {
   DELOAD_SET_FACTOR,
   DELOAD_WEEK_INDEX,
   DURATION_TOLERANCE,
+  MAX_FINISHER_SEC,
+  MAX_SESSIONS_PER_WEEK,
   MAX_SETS_PER_EXERCISE,
   PLAN_TEMPLATES,
   REP_SCHEMES,
@@ -63,7 +65,14 @@ export interface GeneratePlanOptions {
 
 export type BlockedPlanResult = Extract<ScreeningResult, { ok: false }>;
 export type GeneratePlanResult =
-  { ok: true; plan: Plan; templateId: TemplateId } | BlockedPlanResult;
+  | {
+      ok: true;
+      plan: Plan;
+      templateId: TemplateId;
+      /** Plain-English notes about compromises, e.g. fewer sessions than requested (D10). */
+      warnings: string[];
+    }
+  | BlockedPlanResult;
 
 /**
  * Generates a 6-week rule-based plan (feature A).
@@ -75,11 +84,16 @@ export type GeneratePlanResult =
  * - Exercises are filtered by the profile's actual equipment and limitations (see
  *   `rankCandidates`); key compound lifts are marked `is_key`. Target loads are left empty:
  *   the first logged session calibrates them (`nextTargets`).
- * - Sessions are fitted to `session_minutes` +/- 10% with the time model in `session-time.ts`,
- *   keeping weekly hard sets per muscle within `WEEKLY_SET_CAPS`. When the lifting volume cannot
- *   fill the time (short of the caps), the remainder becomes an easy conditioning finisher.
- * - Days: chosen from `available_days`, avoiding same-muscle sessions on consecutive days
- *   first, then preferring the user's `training_slots` days, then wider spacing.
+ * - Duration (D9): sessions never exceed `session_minutes` + 10% (time model in
+ *   `session-time.ts`) and aim for `session_minutes` within the weekly hard-set caps
+ *   (`WEEKLY_SET_CAPS`). A training-week session still short of -10% gets one easy conditioning
+ *   finisher of at most 10 minutes (`MAX_FINISHER_SEC`); beyond that it is simply shorter and the
+ *   rationale says so. Deload sessions are shorter on purpose and get no finisher.
+ * - Days (D10): chosen from `available_days` and the session order on those days is permuted so
+ *   that no two sessions sharing a primary muscle land on consecutive days (including Sunday ->
+ *   next Monday); ties prefer `training_slots` days, then wider spacing. If no arrangement is
+ *   conflict-free, fewer sessions per week are planned (with a template for that count) and
+ *   `warnings` plus the rationale explain why.
  *
  * Invalid input (schema violations, goal of another user, start date not a Monday) throws.
  * The output is validated with the catalog validators and the rules validator before returning.
@@ -105,8 +119,6 @@ export function generatePlan(
   const catalog = opts.catalog ?? EXERCISE_CATALOG;
   const lookup = createCatalogLookup(catalog);
   const startDate = resolveStartDate(opts.startDate, today);
-  const templateId = templateForDays(profile.days_per_week);
-  const template = PLAN_TEMPLATES[templateId];
   const level = profile.experience_level;
   const ctx: SelectionContext = {
     catalog,
@@ -115,23 +127,8 @@ export function generatePlan(
     level,
   };
   const budget = timeBudget(profile.session_minutes);
-  const sessionsPerWeek = Math.min(profile.days_per_week, template.sessions.length);
-
-  const drafts = template.sessions.map((st) => draftSession(st, goal.type, ctx));
-  drafts.forEach((draft) => {
-    fitToUpperBound(draft, budget);
-  });
-  enforceWeeklyCaps(drafts, WEEKLY_SET_CAPS[level]);
-  fillSets(drafts, budget, MAX_SETS_PER_EXERCISE[level], WEEKLY_SET_CAPS[level]);
-  drafts.forEach((draft) => {
-    addFinisherIfShort(draft, budget, ctx);
-  });
-  const deloadDrafts = drafts.map((draft) => deloadOf(draft, budget, ctx));
-
-  const days = chooseTrainingDays(
-    profile,
-    drafts.slice(0, sessionsPerWeek).map((draft) => draftMuscles(draft)),
-  );
+  const layout = chooseLayout(profile, goal.type, ctx, budget);
+  const { templateId, sessionsPerWeek, drafts, deloadDrafts, days } = layout;
 
   const planId = opts.newId();
   const weeks: PlanWeek[] = [];
@@ -176,7 +173,7 @@ export function generatePlan(
     status: 'active',
     start_date: startDate,
     generated_by: 'rules',
-    rationale_text: rationale(profile, goal.type, templateId, sessionsPerWeek),
+    rationale_text: rationale(profile, goal.type, layout),
     created_at: now,
     weeks,
   };
@@ -188,7 +185,84 @@ export function generatePlan(
       `Generated plan breaks rules: ${issues.map((i) => `${i.path}: ${i.message}`).join('; ')}`,
     );
   }
-  return { ok: true, plan: validated, templateId };
+  return { ok: true, plan: validated, templateId, warnings: layout.warnings };
+}
+
+interface Layout {
+  templateId: TemplateId;
+  sessionsPerWeek: number;
+  /** Training-week drafts in weekly order (index i is scheduled on `days[i]`). */
+  drafts: DraftSession[];
+  deloadDrafts: DraftSession[];
+  days: number[];
+  warnings: string[];
+}
+
+/**
+ * D10: the most sessions per week (up to the requested days) whose best day arrangement has no
+ * same-muscle sessions on consecutive days. One session per week is always conflict-free.
+ */
+function chooseLayout(
+  profile: Profile,
+  goal: GoalType,
+  ctx: SelectionContext,
+  budget: TimeBudget,
+): Layout {
+  const requested = Math.min(profile.days_per_week, MAX_SESSIONS_PER_WEEK);
+  for (let count = requested; count >= 1; count -= 1) {
+    const templateId = templateForDays(count);
+    const template = PLAN_TEMPLATES[templateId];
+    const sessionsPerWeek = Math.min(count, template.sessions.length);
+    const { drafts, deloadDrafts } = buildDrafts(template.sessions, goal, ctx, budget);
+    const weekly = drafts.slice(0, sessionsPerWeek);
+    const choice = chooseTrainingDays(profile, weekly.map(draftMuscles));
+    if (choice.violations > 0 && count > 1) {
+      continue;
+    }
+    const reorder = <T>(items: readonly T[]) =>
+      sessionsPerWeek === 1 ? [...items] : choice.order.map((i) => must(items[i]));
+    const warnings =
+      count < requested
+        ? [
+            `You chose ${profile.days_per_week} training days, but on your available days (${profile.available_days.join(', ')}) ${requested} sessions would train the same muscles on back-to-back days. This plan uses ${sessionsPerWeek} session${sessionsPerWeek === 1 ? '' : 's'} per week so you can recover; add a day that is not next to the others to train more often.`,
+          ]
+        : [];
+    return {
+      templateId,
+      sessionsPerWeek,
+      drafts: reorder(drafts),
+      deloadDrafts: reorder(deloadDrafts),
+      days: choice.days,
+      warnings,
+    };
+  }
+  throw new Error('Unreachable: one session per week is always schedulable');
+}
+
+/** Builds and fits the template sessions (training weeks) and their deload versions. */
+function buildDrafts(
+  templates: readonly SessionTemplate[],
+  goal: GoalType,
+  ctx: SelectionContext,
+  budget: TimeBudget,
+): { drafts: DraftSession[]; deloadDrafts: DraftSession[] } {
+  const drafts = templates.map((st) => draftSession(st, goal, ctx));
+  drafts.forEach((draft) => {
+    fitToUpperBound(draft, budget);
+  });
+  enforceWeeklyCaps(drafts, WEEKLY_SET_CAPS[ctx.level]);
+  fillSets(drafts, budget, MAX_SETS_PER_EXERCISE[ctx.level], WEEKLY_SET_CAPS[ctx.level]);
+  drafts.forEach((draft) => {
+    addFinisherIfShort(draft, budget, ctx);
+  });
+  return { drafts, deloadDrafts: drafts.map(deloadOf) };
+}
+
+function must<T>(value: T | undefined): T {
+  if (value === undefined) {
+    throw new Error('Unexpected missing value');
+  }
+  return value;
 }
 
 /**
@@ -435,11 +509,10 @@ function capAllows(drafts: readonly DraftSession[], de: DraftExercise, cap: numb
 }
 
 const MIN_FINISHER_SEC = 30;
-const MAX_SECONDS_PER_FINISHER_SET = 3600;
 
 /**
- * Fills the remaining time with an easy conditioning block (rest 0) when the lifting volume
- * cannot reach the lower bound. The block is sized to land on the target duration.
+ * D9: when the lifting volume leaves a training-week session below the -10% bound, adds one easy
+ * conditioning set (rest 0) towards the target duration, capped at `MAX_FINISHER_SEC`.
  */
 function addFinisherIfShort(draft: DraftSession, budget: TimeBudget, ctx: SelectionContext): void {
   const seconds = draftSeconds(draft);
@@ -450,32 +523,31 @@ function addFinisherIfShort(draft: DraftSession, budget: TimeBudget, ctx: Select
     CONDITIONING_EXERCISES.includes(candidate.id),
   );
   if (!exercise) {
-    throw new Error(`No conditioning exercise available to fill "${draft.template.title}"`);
+    return; // custom catalogs without conditioning: the session is just shorter
   }
   const floor5 = (value: number) => Math.floor(value / 5) * 5;
-  const total = Math.max(
-    MIN_FINISHER_SEC,
-    floor5(budget.targetSec - seconds - TIME_MODEL.transitionSec),
+  const duration = Math.min(
+    MAX_FINISHER_SEC,
+    Math.max(MIN_FINISHER_SEC, floor5(budget.targetSec - seconds - TIME_MODEL.transitionSec)),
   );
-  const sets = Math.ceil(total / MAX_SECONDS_PER_FINISHER_SET);
-  const perSet = floor5(total / sets);
   draft.exercises.push({
     exercise,
     is_key: false,
     conditioning: true,
-    sets,
+    sets: 1,
     measure: exercise.measure,
-    rep_min: perSet,
-    rep_max: perSet,
+    rep_min: duration,
+    rep_max: duration,
     rest_sec: 0,
   });
 }
 
 /**
  * Deload: ~40% fewer working sets (at least 1 per exercise); if that changes nothing, the last
- * non-key exercise is dropped. Freed time becomes easy conditioning. Target RIR is 4.
+ * non-key exercise is dropped. No conditioning finisher: deload sessions are shorter on purpose.
+ * Target RIR is 4 (set per week in `TARGET_RIR_BY_WEEK`).
  */
-function deloadOf(draft: DraftSession, budget: TimeBudget, ctx: SelectionContext): DraftSession {
+function deloadOf(draft: DraftSession): DraftSession {
   const deload: DraftSession = {
     template: draft.template,
     exercises: draft.exercises
@@ -485,13 +557,11 @@ function deloadOf(draft: DraftSession, budget: TimeBudget, ctx: SelectionContext
   const sets = (d: DraftSession) =>
     d.exercises.reduce((sum, de) => sum + (de.conditioning ? 0 : de.sets), 0);
   if (sets(deload) === sets(draft)) {
-    // Every exercise was already at one set: drop the last non-key exercise instead.
     const lastNonKey = findLastIndex(deload.exercises, (de) => !de.is_key);
     if (lastNonKey !== -1) {
       deload.exercises.splice(lastNonKey, 1);
     }
   }
-  addFinisherIfShort(deload, budget, ctx);
   return deload;
 }
 
@@ -509,38 +579,60 @@ function draftMuscles(draft: DraftSession): Set<MuscleGroup> {
 // Scheduling
 // ---------------------------------------------------------------------------
 
+export interface TrainingDayChoice {
+  /** Weekdays (0 = Monday), ascending; `days[i]` hosts session `order[i]`. */
+  days: number[];
+  /** Permutation of the session indexes in weekly order. */
+  order: number[];
+  /** Same-muscle sessions on consecutive days (including Sunday -> next Monday). */
+  violations: number;
+}
+
 /**
- * Picks one weekday (0 = Monday) per session from `available_days`, assigning sessions in
- * template order. Score, lowest first:
+ * Picks one weekday (0 = Monday) per session from `available_days` and the order of the
+ * sessions on those days. Score, lowest first:
  * 1. same-muscle sessions on consecutive days (including Sunday -> next Monday);
  * 2. fewer chosen days among the user's `training_slots` days;
  * 3. a smaller minimum gap between sessions (wider spacing is better);
- * 4. lexicographically earliest days.
+ * 4. the template order (permutations are tried in lexicographic order);
+ * 5. lexicographically earliest days.
  */
 export function chooseTrainingDays(
   profile: Pick<Profile, 'available_days' | 'training_slots'>,
   sessionMuscles: readonly ReadonlySet<MuscleGroup>[],
-): number[] {
+): TrainingDayChoice {
   const available = profile.available_days
     .map((day) => WEEKDAYS.indexOf(day))
     .sort((a, b) => a - b);
   const slotDays = new Set(profile.training_slots.map((slot) => WEEKDAYS.indexOf(slot.day)));
   const n = sessionMuscles.length;
-  let best: { days: number[]; score: number[] } | undefined;
+  const orders = permutations(sessionMuscles.map((_, i) => i));
+  let best: (TrainingDayChoice & { score: number[] }) | undefined;
   for (const days of combinations(available, n)) {
-    const score = [
-      adjacencyViolations(days, sessionMuscles),
-      -days.filter((day) => slotDays.has(day)).length,
-      -minimumGap(days),
-    ];
-    if (!best || compareScores(score, best.score) < 0) {
-      best = { days, score };
-    }
+    const slotScore = -days.filter((day) => slotDays.has(day)).length;
+    const gapScore = -minimumGap(days);
+    orders.forEach((order, orderIndex) => {
+      const muscles = order.map((i) => must(sessionMuscles[i]));
+      const violations = adjacencyViolations(days, muscles);
+      const score = [violations, slotScore, gapScore, orderIndex];
+      if (!best || compareScores(score, best.score) < 0) {
+        best = { days, order, violations, score };
+      }
+    });
   }
   if (!best) {
     throw new Error(`Cannot schedule ${n} sessions on ${available.length} available days`);
   }
-  return best.days;
+  return { days: best.days, order: best.order, violations: best.violations };
+}
+
+function permutations(items: readonly number[]): number[][] {
+  if (items.length <= 1) {
+    return [[...items]];
+  }
+  return items.flatMap((head, i) =>
+    permutations([...items.slice(0, i), ...items.slice(i + 1)]).map((tail) => [head, ...tail]),
+  );
 }
 
 function adjacencyViolations(
@@ -660,24 +752,33 @@ const GOAL_LABELS: Readonly<Record<GoalType, string>> = {
   general: 'general fitness',
 };
 
-function rationale(
-  profile: Profile,
-  goal: GoalType,
-  templateId: TemplateId,
-  sessionsPerWeek: number,
-): string {
-  const template = PLAN_TEMPLATES[templateId];
+function rationale(profile: Profile, goal: GoalType, layout: Layout): string {
+  const template = PLAN_TEMPLATES[layout.templateId];
+  const { sessionsPerWeek } = layout;
   const parts = [
-    `${template.name} for ${GOAL_LABELS[goal]}: ${sessionsPerWeek} session(s) per week of about ${profile.session_minutes} minutes.`,
+    `${template.name} for ${GOAL_LABELS[goal]}: ${sessionsPerWeek} session${sessionsPerWeek === 1 ? '' : 's'} per week of about ${profile.session_minutes} minutes.`,
     'Weeks 1-5 build up gradually; week 6 is a deload with fewer sets so you recover.',
     'Work up to the top of each rep range on every set, then add weight and start again at the bottom of the range.',
   ];
-  if (profile.days_per_week === 1) {
-    parts.push('With one training day per week, sessions A and B alternate week by week.');
+  if (sessionsPerWeek === 1) {
+    parts.push('With one session per week, sessions A and B alternate week by week.');
   }
-  if (profile.days_per_week > sessionsPerWeek && sessionsPerWeek === template.sessions.length) {
-    parts.push(`Your other available days are for rest or light activity such as walking.`);
+  parts.push(...layout.warnings);
+  if (profile.days_per_week > sessionsPerWeek && layout.warnings.length === 0) {
+    parts.push('Your other available days are for rest or light activity such as walking.');
   }
+  const minutes = layout.drafts
+    .slice(0, sessionsPerWeek === 1 ? 2 : sessionsPerWeek)
+    .map((draft) => secondsToEstMinutes(draftSeconds(draft)));
+  const shortest = Math.min(...minutes);
+  const longest = Math.max(...minutes);
+  if (shortest < profile.session_minutes * (1 - DURATION_TOLERANCE)) {
+    const range = shortest === longest ? `${shortest}` : `${shortest}-${longest}`;
+    parts.push(
+      `Sessions take about ${range} min, a bit less than the ${profile.session_minutes} you have, because more sets would exceed a safe weekly volume; use extra time for an easy walk.`,
+    );
+  }
+  parts.push('Deload sessions in week 6 are shorter on purpose.');
   if (profile.experience_level === 'beginner') {
     parts.push(
       'As a beginner you stop each set with 3-4 reps in reserve and never train to failure.',

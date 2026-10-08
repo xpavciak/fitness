@@ -1,14 +1,15 @@
 import { isExerciseAvailable } from '../equipment.js';
 import { daysBetween } from '../dates.js';
-import type {
-  Exercise,
-  MuscleGroup,
-  Plan,
-  PlannedExerciseRow,
-  PlannedSession,
-  PlannedSessionRow,
-  Profile,
-  SessionStatus,
+import {
+  EXPERIENCE_LEVELS,
+  type Exercise,
+  type MuscleGroup,
+  type Plan,
+  type PlannedExerciseRow,
+  type PlannedSession,
+  type PlannedSessionRow,
+  type Profile,
+  type SessionStatus,
 } from '../schemas/index.js';
 import { isContraindicated } from './select.js';
 import { estimateSessionMinutes } from './session-time.js';
@@ -26,14 +27,15 @@ export function countsTowardVolume(exercise: Pick<Exercise, 'pattern' | 'low_sti
 
 /**
  * Hard sets per muscle group across the given sessions: each working set counts once for every
- * primary muscle of the exercise (see `WEEKLY_SET_CAPS`).
+ * primary muscle of the exercise (see `WEEKLY_SET_CAPS`). Skipped and merged sessions are not
+ * counted (their work is not done, or is counted in the absorbing session).
  */
 export function weeklySetsByMuscle(
   sessions: readonly SessionWithExercises[],
   lookup: Lookup,
 ): Map<MuscleGroup, number> {
   const totals = new Map<MuscleGroup, number>();
-  for (const session of sessions) {
+  for (const session of sessions.filter(occupiesDate)) {
     for (const pe of session.exercises) {
       const exercise = lookup(pe.exercise_id);
       if (!countsTowardVolume(exercise)) {
@@ -119,11 +121,15 @@ export interface PlanRuleIssue {
 /**
  * Rules validator (research 2.3, guardrail 2), run after generation and usable on any plan
  * (e.g. LLM output). Checks, for the profile:
- * - every exercise is available with the profile's equipment and not contraindicated;
- * - weekly hard sets per muscle group stay within `WEEKLY_SET_CAPS`;
+ * - every exercise is available with the profile's equipment, not contraindicated, and at most
+ *   one level above the user's experience level;
+ * - weekly hard sets per muscle group stay within `WEEKLY_SET_CAPS` (skipped and merged sessions
+ *   are ignored);
  * - sets per exercise stay within `MAX_SETS_PER_EXERCISE`;
  * - no prescription to failure (target_rir >= 1) and beginners keep RIR >= 3;
- * - full sessions: `est_minutes` matches the time model and is within session_minutes +/- 10%;
+ * - `est_minutes` matches the time model; full sessions do not exceed session_minutes + 10%
+ *   (D9: shorter is allowed when the volume caps bind, and in the deload);
+ * - no two sessions sharing a primary muscle on consecutive days, across week boundaries (D10);
  * - the deload week is lighter than the training weeks (see `checkDeload`).
  * Structural validity is the schema's job (`createCatalogValidators(...).Plan`).
  */
@@ -136,7 +142,8 @@ export function validatePlanRules(
   const cap = WEEKLY_SET_CAPS[profile.experience_level];
   const maxSets = MAX_SETS_PER_EXERCISE[profile.experience_level];
   const minRir = profile.experience_level === 'beginner' ? 3 : 1;
-  const tolerance = profile.session_minutes * DURATION_TOLERANCE;
+  const maxMinutes = profile.session_minutes * (1 + DURATION_TOLERANCE);
+  const maxLevel = EXPERIENCE_LEVELS.indexOf(profile.experience_level) + 1;
 
   plan.weeks.forEach((week, w) => {
     for (const [muscle, sets] of weeklySetsByMuscle(week.sessions, lookup)) {
@@ -149,7 +156,7 @@ export function validatePlanRules(
     }
     week.sessions.forEach((session, s) => {
       const path = `weeks.${w}.sessions.${s}`;
-      checkSessionDuration(session, profile.session_minutes, tolerance, lookup, path, issues);
+      checkSessionDuration(session, profile.session_minutes, maxMinutes, lookup, path, issues);
       session.exercises.forEach((pe, e) => {
         const exercise = lookup(pe.exercise_id);
         const exercisePath = `${path}.exercises.${e}`;
@@ -162,6 +169,12 @@ export function validatePlanRules(
         if (isContraindicated(exercise, profile.limitations)) {
           issues.push({ path: exercisePath, message: `${exercise.id} is contraindicated` });
         }
+        if (EXPERIENCE_LEVELS.indexOf(exercise.level) > maxLevel) {
+          issues.push({
+            path: exercisePath,
+            message: `${exercise.id} (${exercise.level}) is too advanced for a ${profile.experience_level}`,
+          });
+        }
         if (pe.sets > maxSets) {
           issues.push({ path: exercisePath, message: `${pe.sets} sets exceeds ${maxSets}` });
         }
@@ -172,6 +185,13 @@ export function validatePlanRules(
     });
   });
 
+  const allSessions = plan.weeks.flatMap((week) => week.sessions);
+  for (const conflict of consecutiveMuscleConflicts(allSessions, lookup)) {
+    issues.push({
+      path: 'weeks',
+      message: `Sessions ${conflict.firstSessionId} and ${conflict.secondSessionId} train ${conflict.muscles.join(', ')} on consecutive days`,
+    });
+  }
   checkDeload(plan, lookup, issues);
   return issues;
 }
@@ -186,8 +206,9 @@ const maxRir = (session: PlannedSession) =>
   Math.max(...session.exercises.map((pe) => pe.target_rir));
 
 /**
- * The plan needs a deload week. Each deload session must be easier than the same session (by
- * title) in the latest training week: fewer hard sets, or the same sets at a higher RIR.
+ * The plan needs a deload week. Each full-variant deload session must be easier than the same
+ * full-variant session (by title) in the latest training week: fewer hard sets, or the same sets
+ * at a higher RIR. Shortened, minimum-dose, skipped and merged sessions are not compared.
  */
 function checkDeload(plan: Plan, lookup: Lookup, issues: PlanRuleIssue[]): void {
   const deload = plan.weeks.find((week) => week.phase === 'deload');
@@ -196,11 +217,13 @@ function checkDeload(plan: Plan, lookup: Lookup, issues: PlanRuleIssue[]): void 
     return;
   }
   const trainingWeeks = plan.weeks.filter((week) => week.index < deload.index).reverse();
+  const comparable = (session: PlannedSession) =>
+    session.variant === 'full' && occupiesDate(session);
   deload.sessions.forEach((session, s) => {
     const reference = trainingWeeks
       .flatMap((week) => week.sessions)
-      .find((candidate) => candidate.title === session.title);
-    if (!reference) {
+      .find((candidate) => candidate.title === session.title && comparable(candidate));
+    if (!comparable(session) || !reference) {
       return;
     }
     const fewer = hardSets(session, lookup) < hardSets(reference, lookup);
@@ -219,7 +242,7 @@ function checkDeload(plan: Plan, lookup: Lookup, issues: PlanRuleIssue[]): void 
 function checkSessionDuration(
   session: PlannedSession,
   sessionMinutes: number,
-  tolerance: number,
+  maxMinutes: number,
   lookup: Lookup,
   path: string,
   issues: PlanRuleIssue[],
@@ -231,10 +254,10 @@ function checkSessionDuration(
       message: `est_minutes ${session.est_minutes} does not match the time model (${modelled})`,
     });
   }
-  if (session.variant === 'full' && Math.abs(session.est_minutes - sessionMinutes) > tolerance) {
+  if (session.variant === 'full' && session.est_minutes > maxMinutes) {
     issues.push({
       path,
-      message: `est_minutes ${session.est_minutes} is outside ${sessionMinutes} +/- 10%`,
+      message: `est_minutes ${session.est_minutes} exceeds ${sessionMinutes} + 10%`,
     });
   }
 }

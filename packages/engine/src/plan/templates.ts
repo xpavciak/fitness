@@ -365,3 +365,12 @@ export const WEEKLY_SET_CAPS: Readonly<Record<ExperienceLevel, number>> = {
 
 /** Duration tolerance: est_minutes must be within session_minutes +/- 10%. */
 export const DURATION_TOLERANCE = 0.1;
+
+/**
+ * Conditioning finisher cap (D9): one set of at most 10 minutes, only in training weeks.
+ * When the weekly volume caps leave a session shorter than requested, it simply ends earlier.
+ */
+export const MAX_FINISHER_SEC = 600;
+
+/** Most sessions any template schedules per week (Upper/Lower 4x). */
+export const MAX_SESSIONS_PER_WEEK = 4;

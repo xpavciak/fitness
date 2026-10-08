@@ -48,6 +48,7 @@ function matchesSlot(exercise: Exercise, slot: Pick<ExerciseSlot, 'pattern' | 'm
  * (contraindication tags) and level (at most one level above the user's). Ranking:
  * 1. non-low-stimulus before low-stimulus;
  * 2. at or below the user's level before one level above;
+ *    (beginners swap 1 and 2: an easier low-stimulus option beats a harder exercise);
  * 3. the pattern's preference list (`EXERCISE_PREFERENCES`), then catalog order.
  */
 export function rankCandidates(
@@ -69,8 +70,7 @@ export function rankCandidates(
       return {
         exercise,
         key: [
-          exercise.low_stimulus ? 1 : 0,
-          levelRank(exercise.level) > userLevel ? 1 : 0,
+          ...rankTiers(ctx.level, exercise.low_stimulus, levelRank(exercise.level) > userLevel),
           preferenceIndex === -1 ? preferences.length : preferenceIndex,
           catalogIndex,
         ],
@@ -78,6 +78,16 @@ export function rankCandidates(
     });
   scored.sort((a, b) => compareKeys(a.key, b.key));
   return scored.map(({ exercise }) => exercise);
+}
+
+/**
+ * The first two ranking tiers. Beginners rank "at or below my level" above "not low stimulus"
+ * (a simpler exercise beats a harder one); everyone else prefers non-low-stimulus first.
+ */
+function rankTiers(level: ExperienceLevel, lowStimulus: boolean, aboveLevel: boolean): number[] {
+  const low = lowStimulus ? 1 : 0;
+  const above = aboveLevel ? 1 : 0;
+  return level === 'beginner' ? [above, low] : [low, above];
 }
 
 function compareKeys(a: readonly number[], b: readonly number[]): number {

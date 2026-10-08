@@ -162,22 +162,28 @@ describe('rescheduleWeek: missed sessions', () => {
     }
   });
 
-  it('merges a missed Saturday session into Sunday when that is the only option left', () => {
+  it('merges a missed session into the next one when no safe free day is left', () => {
+    // Full Body 2x on Wed + Sat. Wednesday is missed; Thursday is today, Friday and Sunday sit
+    // next to Saturday, and both sessions are key, so the key work merges into Saturday.
     const profile = makeProfile({
       days_per_week: 2,
-      available_days: ['sat', 'sun'],
-      training_slots: [],
+      available_days: ['wed', 'fri', 'sat', 'sun'],
+      training_slots: [
+        { day: 'wed', start_time: '18:00', location: 'gym' },
+        { day: 'sat', start_time: '09:00', location: 'gym' },
+      ],
     });
     const plan = planFor(profile);
     const week = must(plan.weeks[0]);
-    const [saturday, sunday] = week.sessions;
+    const [wednesday, saturday] = week.sessions;
+    expect(week.sessions.map((s) => s.scheduled_date)).toEqual(['2026-10-14', '2026-10-17']);
     const proposals = proposeReschedules(
       week,
-      { type: 'missed', session_id: must(saturday).id },
-      constraints(plan, profile, '2026-10-18'),
+      { type: 'missed', session_id: must(wednesday).id },
+      constraints(plan, profile, '2026-10-15'),
     );
     expect(proposals.map((p) => p.kind)).toEqual(['merge', 'skip']);
-    expect(proposals[0]?.changes[0]?.merged_into_session_id).toBe(must(sunday).id);
+    expect(proposals[0]?.changes[0]?.merged_into_session_id).toBe(must(saturday).id);
   });
 
   it('rejects sessions that are done, merged or not in the week', () => {

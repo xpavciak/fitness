@@ -85,7 +85,8 @@ describe('QA batch 2: generatePlan over realistic profiles', () => {
           for (const week of p.weeks) {
             expect(consecutiveMuscleConflicts(week.sessions, lookup)).toEqual([]);
             for (const session of week.sessions) {
-              expect(Math.abs(session.est_minutes - minutes)).toBeLessThanOrEqual(minutes * 0.1);
+              // D9: never longer than +10%; shorter is allowed when caps bind and in the deload.
+              expect(session.est_minutes).toBeLessThanOrEqual(minutes * 1.1);
               for (const pe of session.exercises) {
                 const exercise = lookup(pe.exercise_id);
                 expect(
@@ -119,20 +120,16 @@ describe('QA batch 2: generatePlan over realistic profiles', () => {
     expect(generate(makeProfile({ birth_year: 2008 }), '2027-01-01').ok).toBe(true);
   });
 
-  // BUG (minor): days are chosen with sessions in fixed template order, so with Mon/Wed/Fri/Sat
-  // available Upper B (Fri) and Lower B (Sat) share front delts (bear crawl) on consecutive days,
-  // although Upper A, Upper B, Lower A, Lower B on the same days has no conflict.
-  it.fails(
-    'BUG: a conflict-free day order exists but is not chosen (Mon/Wed/Fri/Sat, bodyweight)',
-    () => {
-      const profile = makeProfile({
-        equipment: [],
-        days_per_week: 4,
-        available_days: ['mon', 'wed', 'fri', 'sat'],
-        training_slots: [],
-      });
-      const week = plan(profile).weeks[0];
-      expect(consecutiveMuscleConflicts(week?.sessions ?? [], lookup)).toEqual([]);
-    },
-  );
+  // Fixed (QA bug 9, D10): session orders are permuted on the chosen days, so a conflict-free
+  // order is found when one exists.
+  it('a conflict-free day order is chosen when one exists (Mon/Wed/Fri/Sat, bodyweight)', () => {
+    const profile = makeProfile({
+      equipment: [],
+      days_per_week: 4,
+      available_days: ['mon', 'wed', 'fri', 'sat'],
+      training_slots: [],
+    });
+    const week = plan(profile).weeks[0];
+    expect(consecutiveMuscleConflicts(week?.sessions ?? [], lookup)).toEqual([]);
+  });
 });

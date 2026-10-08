@@ -30,9 +30,21 @@ import {
   type Weekday,
 } from '../schemas/index.js';
 import { generatePlan } from './generate.js';
-import { countsTowardVolume, sessionMuscles, sharesMuscles, validatePlanRules } from './rules.js';
+import {
+  consecutiveMuscleConflicts,
+  countsTowardVolume,
+  sessionMuscles,
+  sharesMuscles,
+  validatePlanRules,
+} from './rules.js';
 import { estimateSessionMinutes } from './session-time.js';
-import { BEGINNER_STRENGTH_KEY, REP_SCHEMES, TIMED_SCHEME, WEEKLY_SET_CAPS } from './templates.js';
+import {
+  BEGINNER_STRENGTH_KEY,
+  MAX_FINISHER_SEC,
+  REP_SCHEMES,
+  TIMED_SCHEME,
+  WEEKLY_SET_CAPS,
+} from './templates.js';
 
 const validators = createCatalogValidators(EXERCISE_CATALOG);
 
@@ -297,23 +309,53 @@ describe('generatePlan', () => {
     }
   });
 
-  it('avoids consecutive full-body days when the available days allow it', () => {
-    const plan = planFor(
-      makeProfile({
-        days_per_week: 3,
-        available_days: ['mon', 'tue', 'wed', 'thu'],
-        training_slots: [{ day: 'mon', start_time: '07:00', location: 'gym' }],
-      }),
-    );
-    // Only Mon/Tue/Wed/Thu: 3 full-body sessions cannot avoid one consecutive pair, so the
-    // planner picks Mon + Wed + Thu or Mon + Tue + Thu (one pair), never Mon/Tue/Wed (two).
-    const days = must(plan.weeks[0]).sessions.map((s) => weekdayIndex(s.scheduled_date));
+  it('plans fewer sessions with a warning when 3 full-body days cannot avoid back-to-back days (D10)', () => {
+    const profile = makeProfile({
+      days_per_week: 3,
+      available_days: ['mon', 'tue', 'wed', 'thu'],
+      training_slots: [{ day: 'mon', start_time: '07:00', location: 'gym' }],
+    });
+    const result = generatePlan(profile, makeGoal(), {
+      today: TODAY,
+      now: NOW,
+      newId: createSeededIdGenerator(1),
+    });
+    if (!result.ok) {
+      throw new Error('blocked');
+    }
+    // Mon-Thu only: any 3 full-body days include a consecutive pair, so it drops to Full Body 2x.
+    expect(result.templateId).toBe('full_body_2x');
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatch(/You chose 3 training days.*uses 2 sessions per week/);
+    expect(result.plan.rationale_text).toContain(result.warnings[0]);
+    const week = must(result.plan.weeks[0]);
     expect(
       adjacencyViolations(
-        days,
-        must(plan.weeks[0]).sessions.map((s) => sessionMuscles(s, lookup)),
+        week.sessions.map((s) => weekdayIndex(s.scheduled_date)),
+        week.sessions.map((s) => sessionMuscles(s, lookup)),
       ),
-    ).toBe(1);
+    ).toBe(0);
+    expect(week.sessions.map((s) => weekdayIndex(s.scheduled_date))).toEqual([0, 3]); // Mon + Thu
+  });
+
+  it('reorders sessions instead of dropping one when an order without conflicts exists', () => {
+    const result = generatePlan(
+      makeProfile({
+        equipment: [],
+        days_per_week: 4,
+        available_days: ['mon', 'wed', 'fri', 'sat'],
+        training_slots: [],
+      }),
+      makeGoal(),
+      { today: TODAY, now: NOW, newId: createSeededIdGenerator(1) },
+    );
+    if (!result.ok) {
+      throw new Error('blocked');
+    }
+    expect(result.warnings).toEqual([]);
+    const sessions = result.plan.weeks.flatMap((week) => week.sessions);
+    expect(must(result.plan.weeks[0]).sessions).toHaveLength(4);
+    expect(consecutiveMuscleConflicts(sessions, lookup)).toEqual([]);
   });
 
   it('alternates upper and lower days so 4 consecutive days have no same-muscle pairs', () => {
@@ -372,11 +414,18 @@ describe('generatePlan properties over many profiles', () => {
     });
   });
   const goals = profiles.map(() => pick(random, GOAL_TYPES));
-  const cases = profiles.map((profile, i) => ({
-    profile,
-    goal: makeGoal(goals[i]),
-    plan: planFor(profile, makeGoal(goals[i]), i + 1),
-  }));
+  const cases = profiles.map((profile, i) => {
+    const goal = makeGoal(goals[i]);
+    const result = generatePlan(profile, goal, {
+      today: TODAY,
+      now: NOW,
+      newId: createSeededIdGenerator(i + 1),
+    });
+    if (!result.ok) {
+      throw new Error('blocked');
+    }
+    return { profile, goal, result, plan: result.plan };
+  });
 
   it('every plan validates against the schema and the catalog validators', () => {
     for (const { plan } of cases) {
@@ -413,14 +462,48 @@ describe('generatePlan properties over many profiles', () => {
     }
   });
 
-  it('keeps every session within session_minutes +/- 10% under the time model', () => {
+  it('never exceeds session_minutes + 10% and matches the time model (D9)', () => {
     for (const { plan, profile } of cases) {
       for (const session of plan.weeks.flatMap((week) => week.sessions)) {
         expect(session.est_minutes).toBe(estimateSessionMinutes(session.exercises, 'full', lookup));
-        expect(Math.abs(session.est_minutes - profile.session_minutes)).toBeLessThanOrEqual(
-          profile.session_minutes * 0.1,
-        );
+        expect(session.est_minutes).toBeLessThanOrEqual(profile.session_minutes * 1.1);
       }
+    }
+  });
+
+  it('bounds the conditioning finisher: one set of at most 10 min, never in the deload (D9)', () => {
+    for (const { plan, profile } of cases) {
+      for (const week of plan.weeks) {
+        for (const session of week.sessions) {
+          const finishers = session.exercises.filter(
+            (pe) => lookup(pe.exercise_id).pattern === 'cardio',
+          );
+          if (week.phase === 'deload') {
+            expect(finishers).toEqual([]);
+            continue;
+          }
+          expect(finishers.length).toBeLessThanOrEqual(1);
+          for (const pe of finishers) {
+            expect(pe.sets).toBe(1);
+            expect(pe.rep_max).toBeLessThanOrEqual(MAX_FINISHER_SEC);
+            expect(pe.order).toBe(session.exercises.length - 1);
+          }
+          // Shorter than -10% only when the finisher is already at its cap.
+          if (session.est_minutes < profile.session_minutes * 0.9) {
+            expect(finishers[0]?.rep_max).toBe(MAX_FINISHER_SEC);
+          }
+        }
+      }
+    }
+  });
+
+  it('says so in the rationale when sessions are shorter than requested', () => {
+    for (const { plan, profile } of cases) {
+      const short = plan.weeks
+        .filter((week) => week.phase !== 'deload')
+        .flatMap((week) => week.sessions)
+        .some((session) => session.est_minutes < profile.session_minutes * 0.9);
+      expect(plan.rationale_text?.includes('use extra time for an easy walk')).toBe(short);
     }
   });
 
@@ -438,23 +521,37 @@ describe('generatePlan properties over many profiles', () => {
     }
   });
 
-  it('has no same-muscle sessions on consecutive days unless unavoidable', () => {
-    for (const { plan, profile } of cases) {
-      const week = must(plan.weeks[0]);
-      const muscles = week.sessions.map((s) => sessionMuscles(s, lookup));
-      const actual = adjacencyViolations(
-        week.sessions.map((s) => weekdayIndex(s.scheduled_date)),
-        muscles,
-      );
+  it('never has same-muscle sessions on consecutive days, across week boundaries (D10)', () => {
+    for (const { plan } of cases) {
+      const sessions = plan.weeks.flatMap((week) => week.sessions);
+      expect(consecutiveMuscleConflicts(sessions, lookup)).toEqual([]);
+    }
+  });
+
+  it('only plans fewer sessions than requested when every arrangement would conflict', () => {
+    expect(cases.filter(({ result }) => result.warnings.length > 0).length).toBeGreaterThan(10);
+    for (const { profile, result } of cases) {
+      const requested = Math.min(profile.days_per_week, 4);
+      const perWeek = Math.max(...result.plan.weeks.map((week) => week.sessions.length));
+      if (perWeek === requested) {
+        expect(result.warnings).toEqual([]);
+        continue;
+      }
+      expect(result.warnings).toHaveLength(1);
+      // The requested count is impossible: every choice of days (in any order) for a
+      // full-body template has a consecutive pair, which the available days force.
       const available = profile.available_days
         .map((d) => WEEKDAYS.indexOf(d))
         .sort((a, b) => a - b);
-      const best = Math.min(
-        ...combinations(available, week.sessions.length).map((days) =>
-          adjacencyViolations(days, muscles),
-        ),
+      const conflictFree = combinations(available, perWeek + 1).filter(
+        (days) =>
+          days.every((day, i) => i === 0 || day - (days[i - 1] ?? 0) > 1) &&
+          !(days.length > 1 && days.at(-1) === 6 && days[0] === 0),
       );
-      expect(actual).toBe(best);
+      if (requested >= 4 && perWeek === 3) {
+        continue; // Upper/Lower may still conflict through shared accessories; covered above
+      }
+      expect(conflictFree).toEqual([]);
     }
   });
 
