@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Fitness Plan",
+    "slug": "fitness-plan",
+    "scheme": "fitnessplan",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "platforms": ["ios", "android", "web"],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router", "expo-localization"],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

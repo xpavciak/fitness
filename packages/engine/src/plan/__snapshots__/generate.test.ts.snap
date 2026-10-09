@@ -1,0 +1,56 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`generatePlan > matches the snapshot for the sample beginner (3x/week, dumbbells + bench, knee) 1`] = `
+[
+  {
+    "sessions": [
+      "2026-10-12 Full Body A [key] 46min: chair_squat* 3x8-12 RIR4 rest90, dumbbell_bench_press* 4x8-12 RIR4 rest90, chest_supported_dumbbell_row* 4x8-12 RIR4 rest90, dumbbell_romanian_deadlift 2x10-15 RIR4 rest60, dumbbell_lateral_raise 4x10-15 RIR4 rest60, plank 4x20-40 RIR4 rest60",
+      "2026-10-14 Full Body B [key] 41min: dumbbell_romanian_deadlift* 3x8-12 RIR4 rest90, seated_dumbbell_shoulder_press* 4x8-12 RIR4 rest90, prone_lat_pulldown 4x10-15 RIR4 rest60, dumbbell_biceps_curl 4x10-15 RIR4 rest60, dead_bug 4x10-15 RIR4 rest60",
+      "2026-10-16 Full Body C [normal] 46min: chair_squat* 3x8-12 RIR4 rest90, dumbbell_incline_press* 4x8-12 RIR4 rest90, one_arm_dumbbell_row* 4x8-12 RIR4 rest90, dumbbell_hip_thrust 1x10-15 RIR4 rest60, dumbbell_overhead_triceps_extension 4x10-15 RIR4 rest60, farmers_carry 4x20-40 RIR4 rest60",
+    ],
+    "week": "0 2026-10-12 accumulation",
+  },
+  {
+    "sessions": [
+      "2026-10-19 Full Body A [key] 46min: chair_squat* 3x8-12 RIR4 rest90, dumbbell_bench_press* 4x8-12 RIR4 rest90, chest_supported_dumbbell_row* 4x8-12 RIR4 rest90, dumbbell_romanian_deadlift 2x10-15 RIR4 rest60, dumbbell_lateral_raise 4x10-15 RIR4 rest60, plank 4x20-40 RIR4 rest60",
+      "2026-10-21 Full Body B [key] 41min: dumbbell_romanian_deadlift* 3x8-12 RIR4 rest90, seated_dumbbell_shoulder_press* 4x8-12 RIR4 rest90, prone_lat_pulldown 4x10-15 RIR4 rest60, dumbbell_biceps_curl 4x10-15 RIR4 rest60, dead_bug 4x10-15 RIR4 rest60",
+      "2026-10-23 Full Body C [normal] 46min: chair_squat* 3x8-12 RIR4 rest90, dumbbell_incline_press* 4x8-12 RIR4 rest90, one_arm_dumbbell_row* 4x8-12 RIR4 rest90, dumbbell_hip_thrust 1x10-15 RIR4 rest60, dumbbell_overhead_triceps_extension 4x10-15 RIR4 rest60, farmers_carry 4x20-40 RIR4 rest60",
+    ],
+    "week": "1 2026-10-19 accumulation",
+  },
+  {
+    "sessions": [
+      "2026-10-26 Full Body A [key] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_bench_press* 4x8-12 RIR3 rest90, chest_supported_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_romanian_deadlift 2x10-15 RIR3 rest60, dumbbell_lateral_raise 4x10-15 RIR3 rest60, plank 4x20-40 RIR3 rest60",
+      "2026-10-28 Full Body B [key] 41min: dumbbell_romanian_deadlift* 3x8-12 RIR3 rest90, seated_dumbbell_shoulder_press* 4x8-12 RIR3 rest90, prone_lat_pulldown 4x10-15 RIR3 rest60, dumbbell_biceps_curl 4x10-15 RIR3 rest60, dead_bug 4x10-15 RIR3 rest60",
+      "2026-10-30 Full Body C [normal] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_incline_press* 4x8-12 RIR3 rest90, one_arm_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_hip_thrust 1x10-15 RIR3 rest60, dumbbell_overhead_triceps_extension 4x10-15 RIR3 rest60, farmers_carry 4x20-40 RIR3 rest60",
+    ],
+    "week": "2 2026-10-26 accumulation",
+  },
+  {
+    "sessions": [
+      "2026-11-02 Full Body A [key] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_bench_press* 4x8-12 RIR3 rest90, chest_supported_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_romanian_deadlift 2x10-15 RIR3 rest60, dumbbell_lateral_raise 4x10-15 RIR3 rest60, plank 4x20-40 RIR3 rest60",
+      "2026-11-04 Full Body B [key] 41min: dumbbell_romanian_deadlift* 3x8-12 RIR3 rest90, seated_dumbbell_shoulder_press* 4x8-12 RIR3 rest90, prone_lat_pulldown 4x10-15 RIR3 rest60, dumbbell_biceps_curl 4x10-15 RIR3 rest60, dead_bug 4x10-15 RIR3 rest60",
+      "2026-11-06 Full Body C [normal] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_incline_press* 4x8-12 RIR3 rest90, one_arm_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_hip_thrust 1x10-15 RIR3 rest60, dumbbell_overhead_triceps_extension 4x10-15 RIR3 rest60, farmers_carry 4x20-40 RIR3 rest60",
+    ],
+    "week": "3 2026-11-02 intensification",
+  },
+  {
+    "sessions": [
+      "2026-11-09 Full Body A [key] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_bench_press* 4x8-12 RIR3 rest90, chest_supported_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_romanian_deadlift 2x10-15 RIR3 rest60, dumbbell_lateral_raise 4x10-15 RIR3 rest60, plank 4x20-40 RIR3 rest60",
+      "2026-11-11 Full Body B [key] 41min: dumbbell_romanian_deadlift* 3x8-12 RIR3 rest90, seated_dumbbell_shoulder_press* 4x8-12 RIR3 rest90, prone_lat_pulldown 4x10-15 RIR3 rest60, dumbbell_biceps_curl 4x10-15 RIR3 rest60, dead_bug 4x10-15 RIR3 rest60",
+      "2026-11-13 Full Body C [normal] 46min: chair_squat* 3x8-12 RIR3 rest90, dumbbell_incline_press* 4x8-12 RIR3 rest90, one_arm_dumbbell_row* 4x8-12 RIR3 rest90, dumbbell_hip_thrust 1x10-15 RIR3 rest60, dumbbell_overhead_triceps_extension 4x10-15 RIR3 rest60, farmers_carry 4x20-40 RIR3 rest60",
+    ],
+    "week": "4 2026-11-09 intensification",
+  },
+  {
+    "sessions": [
+      "2026-11-16 Full Body A [key] 28min: chair_squat* 2x8-12 RIR4 rest90, dumbbell_bench_press* 2x8-12 RIR4 rest90, chest_supported_dumbbell_row* 2x8-12 RIR4 rest90, dumbbell_romanian_deadlift 1x10-15 RIR4 rest60, dumbbell_lateral_raise 2x10-15 RIR4 rest60, plank 2x20-40 RIR4 rest60",
+      "2026-11-18 Full Body B [key] 25min: dumbbell_romanian_deadlift* 2x8-12 RIR4 rest90, seated_dumbbell_shoulder_press* 2x8-12 RIR4 rest90, prone_lat_pulldown 2x10-15 RIR4 rest60, dumbbell_biceps_curl 2x10-15 RIR4 rest60, dead_bug 2x10-15 RIR4 rest60",
+      "2026-11-20 Full Body C [normal] 29min: chair_squat* 2x8-12 RIR4 rest90, dumbbell_incline_press* 2x8-12 RIR4 rest90, one_arm_dumbbell_row* 2x8-12 RIR4 rest90, dumbbell_hip_thrust 1x10-15 RIR4 rest60, dumbbell_overhead_triceps_extension 2x10-15 RIR4 rest60, farmers_carry 2x20-40 RIR4 rest60",
+    ],
+    "week": "5 2026-11-16 deload",
+  },
+]
+`;
+
+exports[`generatePlan > matches the snapshot for the sample beginner (3x/week, dumbbells + bench, knee) 2`] = `"Full Body 3x/week for general fitness: 3 sessions per week of about 45 minutes. Weeks 1-5 build up gradually; week 6 is a deload with fewer sets so you recover. Work up to the top of each rep range on every set, then add weight and start again at the bottom of the range. Deload sessions in week 6 are shorter on purpose. As a beginner you stop each set with 3-4 reps in reserve and never train to failure. Exercises that load your knee are left out. This plan is general fitness guidance, not medical advice."`;

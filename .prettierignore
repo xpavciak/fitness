@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+pnpm-lock.yaml
+.expo
+# Hand-written docs and agent configs are not auto-formatted
+.claude
+docs
+PROGRESS.md
