@@ -46,20 +46,19 @@ The build uses a relative base and hash routing (`#/den/2026-11-16`,
 starting with `#/` are routes; other hashes (the "Preskočiť na obsah" skip link) are ignored by
 the router. A top-level error boundary shows a message instead of a blank page.
 
-## Deploy (Cloudflare Pages)
+## Deploy (Cloudflare Workers static assets)
 
-The site is a static build, deployed with Cloudflare Pages' Git integration (no secrets in this repo).
-One-time setup in the Cloudflare dashboard:
+The site is deployed by Cloudflare **Workers Builds** connected to this repository. `wrangler.jsonc`
+tells it what to do: `npx wrangler deploy` runs `pnpm build` and uploads `dist/` as static assets
+(no Worker script). Node comes from `.node-version`, pnpm from `packageManager`.
 
-1. **Workers & Pages → Create → Pages → Connect to Git**, pick `xpavciak/fitness`.
-2. Production branch `main`, framework preset **None**, build command `pnpm build`,
-   output directory `dist`. Node comes from `.node-version`, pnpm from `packageManager`.
-3. After the first deploy: **Custom domains → Set up a custom domain** and enter the
-   (sub)domain; Cloudflare adds the DNS record when the zone is on the same account.
+Dashboard settings (Workers & Pages → `fitness` → Settings → Build): build command empty, deploy
+command `npx wrangler deploy`, production branch `main`. Every push to `main` deploys to
+production; other branches get preview versions. Custom domain: **Settings → Domains & Routes →
+Add → Custom domain**.
 
-Every push to `main` then deploys to production, and every other branch gets a preview URL.
-`public/_headers` sets security headers (CSP etc.) and long caching for hashed assets. Hash
-routing and the relative Vite `base` mean no SPA redirect rules are needed.
+`public/_headers` sets security headers (CSP etc.) and long caching for hashed assets. Hash routing
+and the relative Vite `base` keep deep links working.
 
 ## Structure
 

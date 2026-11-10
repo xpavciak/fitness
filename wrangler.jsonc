@@ -1,0 +1,12 @@
+// Cloudflare Workers static-assets deploy (Workers Builds runs `npx wrangler deploy`).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fitness",
+  "compatibility_date": "2026-11-01",
+  // Build the Vite site before uploading it.
+  "build": { "command": "pnpm build" },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+}
