@@ -145,7 +145,7 @@ export const GYM_SESSIONS: Record<GymSessionKey, GymSessionTemplate> = {
         scheme: 'hypertrophy',
         restSeconds: 60,
         tempo: '2-0-1',
-        cue: '2 s dole, zatlač prednou pätou. Séria = obe nohy.',
+        cue: '2 s dole, zatlač prednou pätou.',
       },
       {
         exerciseId: 'standing-calf-raise',
@@ -244,7 +244,7 @@ export const GYM_SESSIONS: Record<GymSessionKey, GymSessionTemplate> = {
         scheme: 'hypertrophy',
         restSeconds: 90,
         tempo: '2-1-1',
-        cue: 'Na vrchu 1 s stiahni lopatky. Pri jednoručnom príťahu séria = obe strany.',
+        cue: 'Na vrchu 1 s stiahni lopatky.',
       },
       {
         exerciseId: 'reverse-fly',

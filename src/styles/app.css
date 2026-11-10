@@ -51,14 +51,14 @@ a {
 
 a:focus-visible,
 button:focus-visible,
-h1:focus-visible,
-[tabindex]:focus-visible {
+[tabindex]:not([tabindex='-1']):focus-visible {
   outline: none;
   box-shadow: var(--focus);
   border-radius: 6px;
 }
 
-h1:focus:not(:focus-visible) {
+/* Headings receive programmatic focus on route change for screen readers only. */
+[tabindex='-1']:focus {
   outline: none;
 }
 

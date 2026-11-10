@@ -174,7 +174,6 @@ function gymDay(session: GymSessionKey, week: WeekNumber): Omit<DayPlan, 'date' 
     sections,
     estimatedMinutes: estimateMinutes(sections),
     notes: [
-      `Zameranie týždňa: ${WEEKS[week].name} – ${WEEKS[week].focus}`,
       `RIR ${WEEKS[week].rir} = počet opakovaní, ktoré by si ešte zvládol(a) s dobrou technikou.`,
       'Tempo je v sekundách: spúšťanie – pauza – zdvih.',
     ],
