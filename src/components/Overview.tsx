@@ -76,20 +76,44 @@ function StartControl({ plan, today, onStartChange }: OverviewProps) {
   const ended = status === 'ended';
   const [pending, setPending] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  /** Start button that opened the confirmation; focus returns here on close. */
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const wasOpen = useRef(false);
+  const choicesRef = useRef<HTMLDivElement>(null);
+
+  // The question only makes sense while the plan runs (e.g. it may end at midnight).
+  if (pending !== null && status !== 'running') setPending(null);
   const choices = [
     { start: options.thisWeek, label: 'Začať tento týždeň' },
     { start: options.nextWeek, label: 'Začať budúci pondelok' },
   ];
 
   useEffect(() => {
-    if (pending) cancelRef.current?.focus();
+    if (pending) {
+      wasOpen.current = true;
+      cancelRef.current?.focus();
+      return;
+    }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      // The confirmation's buttons are gone; don't leave focus on <body>.
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      // The opener can be re-rendered away when the options change (new week).
+      const opener = openerRef.current?.isConnected ? openerRef.current : null;
+      (opener ?? choicesRef.current?.querySelector('button'))?.focus();
+    }
   }, [pending]);
 
-  const choose = (start: string) => {
+  const choose = (start: string, opener: HTMLButtonElement) => {
     if (start === plan.startDate) return;
     // Replacing a plan that is already in progress needs an explicit confirmation.
-    if (status === 'running') setPending(start);
-    else onStartChange(start);
+    if (status === 'running') {
+      openerRef.current = opener;
+      setPending(start);
+    } else {
+      onStartChange(start);
+    }
   };
 
   return (
@@ -99,7 +123,7 @@ function StartControl({ plan, today, onStartChange }: OverviewProps) {
         Plán vždy začína v pondelok. Pri začiatku v tomto týždni sú dni pred dneškom označené ako
         uplynulé.
       </p>
-      <div className="start-control__buttons">
+      <div className="start-control__buttons" ref={choicesRef}>
         {choices.map(({ start, label }) => {
           const active = !ended && plan.startDate === start;
           return (
@@ -108,7 +132,7 @@ function StartControl({ plan, today, onStartChange }: OverviewProps) {
               type="button"
               className="button"
               aria-pressed={active}
-              onClick={() => choose(start)}
+              onClick={(event) => choose(start, event.currentTarget)}
             >
               {label} <span className="start-control__date">(po {formatDateSk(start, false)})</span>
             </button>
@@ -116,7 +140,17 @@ function StartControl({ plan, today, onStartChange }: OverviewProps) {
         })}
       </div>
       {pending && (
-        <div className="start-control__confirm" role="group" aria-labelledby="restart-question">
+        <div
+          className="start-control__confirm"
+          role="group"
+          aria-labelledby="restart-question"
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              setPending(null);
+            }
+          }}
+        >
           <p id="restart-question">
             <strong>Naozaj začať odznova?</strong> Rozbehnutý plán sa nahradí novým od pondelka{' '}
             {formatDateSk(pending)}.

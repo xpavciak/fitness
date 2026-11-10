@@ -17,8 +17,7 @@ tasks for every day. The UI is in Slovak.
   5 min cool-down. Duration is computed from sets, reps, tempo and rest.
 - Periodisation: week 1 base (RIR 3), week 2 volume (+1 set on main lifts, RIR 2), week 3 peak
   (same sets as week 2, 4–6 reps on main lifts, 180 s rest on squat/bench, RIR 1–2), week 4
-  deload (~40 % fewer sets,
-  RIR 4, extra mobility).
+  deload (~40 % fewer sets, RIR 4, extra mobility).
 - Click a day for the workout, click an exercise for technique steps, muscles, common mistakes,
   easier/harder alternatives, safety setup for heavy barbell lifts and a **3D hologram**
   demonstrating the movement with matching equipment (barbell, dumbbells, benches).

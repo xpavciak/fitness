@@ -96,6 +96,46 @@ describe('overview', () => {
     expect(screen.getByText('Prebieha 2. týždeň plánu.')).toBeVisible();
   });
 
+  it('returns focus to the opening button when the confirmation closes', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(START_STORAGE_KEY, '2026-11-02');
+    render(<App today="2026-11-11" />);
+    const thisWeek = screen.getByRole('button', { name: /Začať tento týždeň/ });
+    const nextWeek = screen.getByRole('button', { name: /Začať budúci pondelok/ });
+    const confirm = () => screen.queryByRole('group', { name: /Naozaj začať odznova\?/ });
+
+    await user.click(thisWeek);
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
+    expect(confirm()).toBeNull();
+    expect(thisWeek).toHaveFocus();
+
+    await user.click(nextWeek);
+    expect(screen.getByRole('button', { name: 'Zrušiť' })).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(confirm()).toBeNull();
+    expect(nextWeek).toHaveFocus();
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-02');
+
+    await user.click(thisWeek);
+    await user.click(screen.getByRole('button', { name: 'Áno, začať odznova' }));
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-09');
+    expect(screen.getByRole('button', { name: /Začať tento týždeň/ })).toHaveFocus();
+  });
+
+  it('closes the confirmation if the plan stops running while it is open', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(START_STORAGE_KEY, '2026-11-02');
+    const { rerender } = render(<App today="2026-11-29" />);
+    const thisWeek = screen.getByRole('button', { name: /Začať tento týždeň/ });
+    await user.click(thisWeek);
+    expect(screen.getByRole('group', { name: /Naozaj/ })).toBeVisible();
+    // Midnight: the plan (2. 11. – 29. 11.) has ended.
+    rerender(<App today="2026-11-30" />);
+    expect(screen.queryByRole('group', { name: /Naozaj/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Plán skončil – začni nový' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Začať tento týždeň/ })).toHaveFocus();
+  });
+
   it('does not ask for confirmation before an upcoming plan starts', async () => {
     const user = userEvent.setup();
     render(<App today="2026-11-11" />);
