@@ -46,6 +46,13 @@ The build uses a relative base and hash routing (`#/den/2026-11-16`,
 starting with `#/` are routes; other hashes (the "Preskočiť na obsah" skip link) are ignored by
 the router. A top-level error boundary shows a message instead of a blank page.
 
+## Deploy
+
+Every push to `main` builds the site and publishes it to GitHub Pages
+(`.github/workflows/deploy.yml`) at <https://xpavciak.github.io/fitness/>.
+One-time setup: in the repository settings, set **Pages → Build and deployment → Source** to
+**GitHub Actions**. Hash routing and the relative Vite `base` make deep links work on Pages.
+
 ## Structure
 
 ```
