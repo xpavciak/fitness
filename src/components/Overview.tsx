@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import {
   WEEKDAY_SHORT,
   daysBetween,
@@ -71,11 +72,26 @@ function DayCard({ day, today }: { day: DayPlan; today: string }) {
 
 function StartControl({ plan, today, onStartChange }: OverviewProps) {
   const options = startOptions(today);
-  const ended = planStatus(plan.startDate, today) === 'ended';
+  const status = planStatus(plan.startDate, today);
+  const ended = status === 'ended';
+  const [pending, setPending] = useState<string | null>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const choices = [
     { start: options.thisWeek, label: 'Začať tento týždeň' },
     { start: options.nextWeek, label: 'Začať budúci pondelok' },
   ];
+
+  useEffect(() => {
+    if (pending) cancelRef.current?.focus();
+  }, [pending]);
+
+  const choose = (start: string) => {
+    if (start === plan.startDate) return;
+    // Replacing a plan that is already in progress needs an explicit confirmation.
+    if (status === 'running') setPending(start);
+    else onStartChange(start);
+  };
+
   return (
     <section className="start-control" aria-labelledby="start-title">
       <h2 id="start-title">{ended ? 'Plán skončil – začni nový' : 'Začiatok plánu'}</h2>
@@ -92,13 +108,41 @@ function StartControl({ plan, today, onStartChange }: OverviewProps) {
               type="button"
               className="button"
               aria-pressed={active}
-              onClick={() => onStartChange(start)}
+              onClick={() => choose(start)}
             >
               {label} <span className="start-control__date">(po {formatDateSk(start, false)})</span>
             </button>
           );
         })}
       </div>
+      {pending && (
+        <div className="start-control__confirm" role="group" aria-labelledby="restart-question">
+          <p id="restart-question">
+            <strong>Naozaj začať odznova?</strong> Rozbehnutý plán sa nahradí novým od pondelka{' '}
+            {formatDateSk(pending)}.
+          </p>
+          <div className="start-control__buttons">
+            <button
+              type="button"
+              className="button button--danger"
+              onClick={() => {
+                onStartChange(pending);
+                setPending(null);
+              }}
+            >
+              Áno, začať odznova
+            </button>
+            <button
+              type="button"
+              className="button"
+              ref={cancelRef}
+              onClick={() => setPending(null)}
+            >
+              Zrušiť
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

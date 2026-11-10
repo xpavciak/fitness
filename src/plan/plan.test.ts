@@ -148,10 +148,10 @@ describe('whole-body coverage', () => {
 });
 
 describe('durations', () => {
-  it('keeps every gym session between 50 and 70 minutes', () => {
+  it('keeps every gym session between 50 and 65 minutes', () => {
     for (const day of plan.days.filter((d) => d.type === 'gym')) {
       expect(day.estimatedMinutes, day.date).toBeGreaterThanOrEqual(50);
-      expect(day.estimatedMinutes, day.date).toBeLessThanOrEqual(70);
+      expect(day.estimatedMinutes, day.date).toBeLessThanOrEqual(65);
     }
   });
 
@@ -205,15 +205,22 @@ describe('progression and deload', () => {
     plan.days.filter((d) => d.week === week && d.type === 'gym').map(totalSets);
   const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
-  it('increases volume from week 1 to week 3', () => {
+  it('adds volume in week 2 and keeps it in the peak week while intensity rises', () => {
     expect(sum(gymSets(2))).toBeGreaterThan(sum(gymSets(1)));
-    expect(sum(gymSets(3))).toBeGreaterThan(sum(gymSets(2)));
+    expect(sum(gymSets(3))).toBe(sum(gymSets(2)));
+    const squat = (w: number) =>
+      plan.days
+        .filter((d) => d.week === w)
+        .flatMap((d) => d.sections.flatMap((s) => s.items))
+        .find((i) => i.kind === 'strength' && i.exerciseId === 'back-squat');
+    expect(squat(2)).toMatchObject({ reps: '6–8', rir: '2' });
+    expect(squat(3)).toMatchObject({ reps: '4–6', rir: '1–2' });
   });
 
-  it('cuts ~45 % of sets in the deload week (as the focus text says) and raises RIR to 4', () => {
+  it('cuts ~40 % of sets in the deload week (as the focus text says) and raises RIR to 4', () => {
     const removed = 1 - sum(gymSets(4)) / sum(gymSets(3));
-    expect(removed).toBeGreaterThanOrEqual(0.4);
-    expect(removed).toBeLessThanOrEqual(0.5);
+    expect(removed).toBeGreaterThanOrEqual(0.35);
+    expect(removed).toBeLessThanOrEqual(0.45);
     expect(plan.weeks[3]?.focus).toContain(`~${Math.round(removed * 20) * 5} %`);
     const rirs = plan.days
       .filter((d) => d.week === 4)
@@ -286,8 +293,8 @@ describe('exercise library', () => {
   it('references the bike as the cardio alternative', () => {
     const cardio = plan.days.filter((d) => d.type === 'cardio');
     for (const day of cardio) {
-      expect(linkedExerciseIdsOfDay(day)).toContain('bike-intervals');
-      expect(exerciseIdsOfDay(day)).not.toContain('bike-intervals');
+      expect(linkedExerciseIdsOfDay(day)).toContain('stationary-bike');
+      expect(exerciseIdsOfDay(day)).not.toContain('stationary-bike');
     }
   });
 

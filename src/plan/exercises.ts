@@ -455,7 +455,7 @@ const EXERCISE_LIST: Exercise[] = [
     animation: 'run',
   },
   {
-    id: 'bike-intervals',
+    id: 'stationary-bike',
     name: 'Rotoped (alternatíva k behu)',
     primaryMuscles: ['cardio'],
     secondaryMuscles: ['quads', 'glutes', 'calves'],

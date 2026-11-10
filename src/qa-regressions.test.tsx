@@ -3,6 +3,7 @@
  * These fail on claude/project-thread-4q93re @ 359b33d and should pass once fixed.
  */
 import { act, render, screen } from '@testing-library/react';
+import { START_STORAGE_KEY } from './hooks/usePlan';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { App } from './App';
 import { getExercise } from './plan';
@@ -42,5 +43,17 @@ describe('QA: skip link keeps the current route', () => {
     // Following the link's href is what a browser does on Enter/click.
     go(skip.getAttribute('href') ?? '');
     expect(screen.queryByRole('heading', { level: 1, name: 'Stránka sa nenašla' })).toBeNull();
+  });
+});
+
+describe('QA (round 2): plan start stays stable when the date changes in an open tab', () => {
+  it('a first-visit plan starting today does not jump a week ahead at midnight', () => {
+    // First visit on Monday 16. 11.: the default plan starts today.
+    const { rerender } = render(<App today="2026-11-16" />);
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
+    // Midnight passes while the tab stays open (useToday would deliver this).
+    rerender(<App today="2026-11-17" />);
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
+    expect(screen.getByText(/pondelok 16\. 11\. 2026 – nedeľa 13\. 12\. 2026/)).toBeVisible();
   });
 });

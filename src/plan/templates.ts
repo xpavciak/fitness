@@ -21,14 +21,15 @@ export const WEEKS: Record<WeekNumber, WeekInfo> = {
   3: {
     week: 3,
     name: 'Vrchol',
-    focus: 'Najťažší týždeň mesiaca: menej opakovaní, vyššia váha, technika má stále prednosť.',
+    focus:
+      'Najťažší týždeň mesiaca: rovnaký počet sérií, menej opakovaní a vyššia váha. Technika má stále prednosť.',
     rir: '1–2',
   },
   4: {
     week: 4,
     name: 'Odľahčenie',
     focus:
-      'Deload: o ~45 % menej sérií, o ~10 % nižšia váha a viac mobility. Telo regeneruje a rastie.',
+      'Deload: o ~40 % menej sérií, o ~10 % nižšia váha a viac mobility. Telo regeneruje a rastie.',
     rir: '4',
   },
 };

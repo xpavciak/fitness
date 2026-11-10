@@ -31,6 +31,10 @@ export interface PlanState {
 export function usePlan(todayIso: string): PlanState {
   const [chosen, setChosen] = useState<string | null>(readStoredStart);
   const start = resolvePlanStart(chosen, todayIso);
+  // Once resolved, the start becomes the chosen one (also in memory when storage
+  // is blocked), so a date change in an open tab never moves a running plan.
+  // Adjusting state during render is React's recommended pattern for derived state.
+  if (start !== chosen) setChosen(start);
   useEffect(() => storeStart(start), [start]);
   const plan = useMemo(() => generatePlan(start), [start]);
   const setStart = useCallback(

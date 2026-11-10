@@ -21,17 +21,27 @@ function CameraControls({ turns }: { turns: number }) {
   const camera = useThree((s) => s.camera);
   const domElement = useThree((s) => s.gl.domElement);
   const invalidate = useThree((s) => s.invalidate);
-  const [orbit] = useState(() => new OrbitCamera(camera, domElement, () => invalidate()));
+  const orbit = useRef<OrbitCamera | null>(null);
   const appliedTurns = useRef(0);
 
-  useEffect(() => () => orbit.dispose(), [orbit]);
+  // Create and dispose in the same effect so StrictMode's mount/unmount/mount
+  // cycle in development ends with a live instance.
+  useEffect(() => {
+    const instance = new OrbitCamera(camera, domElement, () => invalidate());
+    orbit.current = instance;
+    return () => {
+      instance.dispose();
+      if (orbit.current === instance) orbit.current = null;
+    };
+  }, [camera, domElement, invalidate]);
+
   useEffect(() => {
     const delta = turns - appliedTurns.current;
     appliedTurns.current = turns;
-    if (delta !== 0) orbit.rotateBy(delta * ROTATE_STEP_DEGREES);
-  }, [orbit, turns]);
+    if (delta !== 0) orbit.current?.rotateBy(delta * ROTATE_STEP_DEGREES);
+  }, [turns]);
 
-  useFrame(() => orbit.update());
+  useFrame(() => orbit.current?.update());
   return null;
 }
 
@@ -44,6 +54,9 @@ function HologramScene({
   const invalidate = useThree((s) => s.invalidate);
 
   useEffect(() => controller.setAnimation(animation), [controller, animation]);
+  // The controller must exist during render (<primitive object>), so it lives in
+  // state. dispose() only frees GPU buffers/programs; three re-uploads them on
+  // the next render, so StrictMode's dev-only unmount/remount stays functional.
   useEffect(() => () => controller.dispose(), [controller]);
   // In 'demand' mode a frame is only drawn when requested.
   useEffect(() => invalidate(), [invalidate, animation, playing, reducedMotion]);
@@ -82,6 +95,8 @@ export default function HologramStage({ label, turns, ...sceneProps }: HologramS
       camera={{ position: [3.0, 1.5, 2.4], fov: 40, near: 0.1, far: 50 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
+      // Horizontal drag rotates; vertical swipes must keep scrolling the page.
+      style={{ touchAction: 'pan-y' }}
       role="img"
       aria-label={label}
     >

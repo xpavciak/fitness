@@ -74,9 +74,34 @@ describe('overview', () => {
     );
     expect(screen.getByText('Prebieha 1. týždeň plánu.')).toBeVisible();
 
+    // The plan is now in progress, so switching asks for confirmation first.
     await user.click(nextWeek);
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-09');
+    const confirm = screen.getByRole('group', { name: /Naozaj začať odznova\?/ });
+    expect(within(confirm).getByRole('button', { name: 'Zrušiť' })).toHaveFocus();
+    await user.click(within(confirm).getByRole('button', { name: 'Áno, začať odznova' }));
     expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
+    expect(screen.queryByRole('group', { name: /Naozaj začať odznova\?/ })).toBeNull();
     expect(screen.queryByRole('link', { current: 'date' })).toBeNull();
+  });
+
+  it('cancelling the restart keeps the running plan', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem(START_STORAGE_KEY, '2026-11-02');
+    render(<App today="2026-11-11" />);
+    expect(screen.getByText('Prebieha 2. týždeň plánu.')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /Začať tento týždeň/ }));
+    await user.click(screen.getByRole('button', { name: 'Zrušiť' }));
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-02');
+    expect(screen.getByText('Prebieha 2. týždeň plánu.')).toBeVisible();
+  });
+
+  it('does not ask for confirmation before an upcoming plan starts', async () => {
+    const user = userEvent.setup();
+    render(<App today="2026-11-11" />);
+    await user.click(screen.getByRole('button', { name: /Začať tento týždeň/ }));
+    expect(screen.queryByRole('group', { name: /Naozaj/ })).toBeNull();
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-09');
   });
 
   it('offers a restart after the plan has ended', () => {
@@ -97,6 +122,51 @@ describe('overview', () => {
     expect(screen.getAllByRole('link', { name: /Posilňovňa/ })).toHaveLength(12);
     expect(warn).toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('plan start stability with a live clock', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  function liveClockScenario() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    // First visit on Monday evening: the default plan starts today.
+    vi.setSystemTime(new Date(2026, 10, 16, 23, 59, 50));
+    render(<App />);
+    const range = /pondelok 16\. 11\. 2026 – nedeľa 13\. 12\. 2026/;
+    expect(screen.getByText(range)).toBeVisible();
+    // Midnight passes in the open tab.
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(screen.getByText(range)).toBeVisible();
+    expect(screen.getByRole('link', { current: 'date' })).toHaveAccessibleName(/utorok 17\. 11\./);
+    // The tab sleeps for days and becomes visible again.
+    act(() => {
+      vi.setSystemTime(new Date(2026, 10, 19, 9, 0, 0));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(screen.getByText(range)).toBeVisible();
+    expect(screen.getByRole('link', { current: 'date' })).toHaveAccessibleName(/štvrtok 19\. 11\./);
+  }
+
+  it('keeps a first-visit plan across midnight and visibilitychange', () => {
+    liveClockScenario();
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
+  });
+
+  it('keeps it in memory when storage is blocked', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    liveClockScenario();
   });
 });
 

@@ -28,7 +28,7 @@ export const DAYS_PER_WEEK = 7;
 
 /**
  * Fraction of peak-week sets kept per exercise in the deload week. After
- * rounding to whole sets the deload removes ~45 % of the peak-week sets
+ * rounding to whole sets the deload removes ~40 % of the peak-week sets
  * (asserted in plan.test.ts and stated in the week-4 focus text).
  */
 export const DELOAD_SET_FACTOR = 0.6;
@@ -51,17 +51,17 @@ export const WEEK_LAYOUT: readonly DaySlot[] = [
 
 export function setsForWeek(template: StrengthTemplate, week: WeekNumber): number {
   const base = template.baseSets;
-  // Main lifts gain volume in week 2, accessories in week 3 (peak).
-  const peak = base + 1;
+  // Week 2 adds a set to the main lifts; week 3 keeps that volume and raises
+  // intensity instead (fewer reps, heavier, longer rest) so sessions stay ≤ 65 min.
+  const loaded = template.role === 'main' ? base + 1 : base;
   switch (week) {
     case 1:
       return base;
     case 2:
-      return template.role === 'main' ? peak : base;
     case 3:
-      return peak;
+      return loaded;
     case 4:
-      return Math.max(1, Math.round(peak * DELOAD_SET_FACTOR));
+      return Math.max(1, Math.round(loaded * DELOAD_SET_FACTOR));
   }
 }
 
@@ -145,15 +145,15 @@ function gymDay(session: GymSessionKey, week: WeekNumber): Omit<DayPlan, 'date' 
         {
           kind: 'timed',
           name: 'Hlboký drep s výdržou',
-          minutes: 3,
-          detail: '3 × 45 s, medzi výdržami sa postav a uvoľni.',
+          minutes: 4,
+          detail: '4 × 45 s, medzi výdržami sa postav a uvoľni.',
           exerciseId: 'deep-squat-hold',
         },
         {
           kind: 'timed',
           name: 'Rotácie hrudnej chrbtice',
-          minutes: 3,
-          detail: '8 pomalých rotácií na každú stranu.',
+          minutes: 4,
+          detail: '10 pomalých rotácií na každú stranu.',
           exerciseId: 'thoracic-rotation',
         },
         {
@@ -230,7 +230,7 @@ function zone2Day(week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
           minutes,
           detail: 'Rovnomerné uvoľnené tempo na rovine alebo v miernom teréne.',
           exerciseId: 'zone2-run',
-          alternativeExerciseId: 'bike-intervals',
+          alternativeExerciseId: 'stationary-bike',
           intensity: ZONE2_INTENSITY,
         },
       ],
@@ -307,7 +307,7 @@ function intervalDay(week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
           minutes: mainMinutes,
           detail: `${spec.repeats}× opakuj: ${spec.hardMinutes} min rýchly beh, ${spec.easyMinutes} min voľný klus alebo chôdza.`,
           exerciseId: 'interval-run',
-          alternativeExerciseId: 'bike-intervals',
+          alternativeExerciseId: 'stationary-bike',
           intensity: HARD_INTENSITY,
         },
       ],
