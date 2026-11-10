@@ -10,6 +10,7 @@ import {
   ZONE2_MINUTES,
   exerciseIdForWeek,
   type GymSessionKey,
+  type RepScheme,
   type StrengthTemplate,
 } from './templates';
 import type {
@@ -25,7 +26,11 @@ import type {
 export const PLAN_WEEKS = 4;
 export const DAYS_PER_WEEK = 7;
 
-/** Fraction of peak-week sets kept in the deload week (~40 % fewer). */
+/**
+ * Fraction of peak-week sets kept per exercise in the deload week. After
+ * rounding to whole sets the deload removes ~45 % of the peak-week sets
+ * (asserted in plan.test.ts and stated in the week-4 focus text).
+ */
 export const DELOAD_SET_FACTOR = 0.6;
 
 type DaySlot =
@@ -60,6 +65,14 @@ export function setsForWeek(template: StrengthTemplate, week: WeekNumber): numbe
   }
 }
 
+const MEASURES: Record<RepScheme, StrengthItem['measure']> = {
+  strength: 'reps',
+  hypertrophy: 'reps',
+  high: 'reps',
+  hold: 'hold',
+  carry: 'distance',
+};
+
 export function buildStrengthItem(template: StrengthTemplate, week: WeekNumber): StrengthItem {
   const rep = REP_SCHEMES[template.scheme][week - 1];
   if (!rep) throw new Error(`Missing rep scheme for week ${week}`);
@@ -71,8 +84,10 @@ export function buildStrengthItem(template: StrengthTemplate, week: WeekNumber):
     exerciseId: exerciseIdForWeek(template, week),
     sets: setsForWeek(template, week),
     reps: rep.label,
+    measure: MEASURES[template.scheme],
     workSecondsPerSet,
-    restSeconds: template.restSeconds,
+    restSeconds:
+      week === 3 ? (template.peakRestSeconds ?? template.restSeconds) : template.restSeconds,
     rir: WEEKS[week].rir,
     tempo: template.tempo,
     cue: template.cue,
@@ -215,6 +230,7 @@ function zone2Day(week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
           minutes,
           detail: 'Rovnomerné uvoľnené tempo na rovine alebo v miernom teréne.',
           exerciseId: 'zone2-run',
+          alternativeExerciseId: 'bike-intervals',
           intensity: ZONE2_INTENSITY,
         },
       ],
@@ -291,6 +307,7 @@ function intervalDay(week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
           minutes: mainMinutes,
           detail: `${spec.repeats}× opakuj: ${spec.hardMinutes} min rýchly beh, ${spec.easyMinutes} min voľný klus alebo chôdza.`,
           exerciseId: 'interval-run',
+          alternativeExerciseId: 'bike-intervals',
           intensity: HARD_INTENSITY,
         },
       ],
@@ -458,11 +475,21 @@ export function dayTypeCounts(days: DayPlan[]): Record<DayType, number> {
   return counts;
 }
 
-/** Unique exercise ids referenced by a day, in order of appearance. */
+/** Unique exercise ids performed on a day, in order of appearance. */
 export function exerciseIdsOfDay(day: DayPlan): string[] {
   const ids = day.sections
     .flatMap((s) => s.items)
     .map((item) => item.exerciseId)
     .filter((id): id is string => typeof id === 'string');
   return [...new Set(ids)];
+}
+
+/** Exercise ids linked from a day, including equivalent alternatives. */
+export function linkedExerciseIdsOfDay(day: DayPlan): string[] {
+  const alternatives = day.sections
+    .flatMap((s) => s.items)
+    .flatMap((item) =>
+      item.kind === 'timed' && item.alternativeExerciseId ? [item.alternativeExerciseId] : [],
+    );
+  return [...new Set([...exerciseIdsOfDay(day), ...alternatives])];
 }

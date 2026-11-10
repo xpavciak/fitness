@@ -55,6 +55,39 @@ describe('overview', () => {
     expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
   });
 
+  it('lets the user start this week (past days marked) or next Monday', async () => {
+    const user = userEvent.setup();
+    render(<App today="2026-11-11" />);
+    const thisWeek = screen.getByRole('button', { name: /Začať tento týždeň/ });
+    const nextWeek = screen.getByRole('button', { name: /Začať budúci pondelok/ });
+    expect(nextWeek).toHaveAttribute('aria-pressed', 'true');
+    expect(thisWeek).toHaveAttribute('aria-pressed', 'false');
+
+    await user.click(thisWeek);
+    expect(thisWeek).toHaveAttribute('aria-pressed', 'true');
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-09');
+    expect(
+      screen.getByRole('link', { name: /pondelok 9\. 11\. 2026, uplynulý deň/ }),
+    ).toBeVisible();
+    expect(screen.getByRole('link', { current: 'date' })).toHaveAccessibleName(
+      /streda 11\. 11\. 2026, dnes/,
+    );
+    expect(screen.getByText('Prebieha 1. týždeň plánu.')).toBeVisible();
+
+    await user.click(nextWeek);
+    expect(window.localStorage.getItem(START_STORAGE_KEY)).toBe('2026-11-16');
+    expect(screen.queryByRole('link', { current: 'date' })).toBeNull();
+  });
+
+  it('offers a restart after the plan has ended', () => {
+    window.localStorage.setItem(START_STORAGE_KEY, '2026-11-16');
+    render(<App today="2026-12-15" />);
+    expect(screen.getByRole('heading', { name: 'Plán skončil – začni nový' })).toBeVisible();
+    expect(
+      screen.getByRole('button', { name: /Začať tento týždeň \(po 14\. 12\.\)/ }),
+    ).toBeVisible();
+  });
+
   it('still works when storage is unavailable', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
@@ -64,6 +97,18 @@ describe('overview', () => {
     expect(screen.getAllByRole('link', { name: /Posilňovňa/ })).toHaveLength(12);
     expect(warn).toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('skip link', () => {
+  it('moves focus to the main content without changing the route', async () => {
+    const user = userEvent.setup();
+    window.location.hash = '#/den/2026-11-16';
+    render(<App today="2026-11-10" />);
+    await user.click(screen.getByRole('link', { name: 'Preskočiť na obsah' }));
+    expect(screen.getByRole('main')).toHaveFocus();
+    expect(window.location.hash).toBe('#/den/2026-11-16');
+    expect(screen.getByRole('heading', { level: 1, name: /^Nohy/ })).toBeVisible();
   });
 });
 
@@ -94,6 +139,11 @@ describe('navigation', () => {
     expect(screen.getByText('Predné stehná (kvadriceps)')).toBeVisible();
     // jsdom has no WebGL, so the accessible fallback is shown instead of the canvas.
     expect(screen.getByRole('status')).toHaveTextContent(/nepodporuje WebGL/);
+    // Without WebGL the 3D controls and drag hint are hidden.
+    expect(screen.queryByRole('button', { name: /animáciu/ })).toBeNull();
+    expect(screen.queryByText(/otočíš postavu/)).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Bezpečnosť' })).toBeVisible();
+    expect(screen.getByText(/bezpečnostnými tyčami/)).toBeVisible();
     const prescription = screen.getByLabelText('Predpis na dnes');
     expect(prescription).toHaveTextContent('4 × 6–8');
     expect(prescription).toHaveTextContent('150 s');
@@ -102,39 +152,40 @@ describe('navigation', () => {
     expect(await screen.findByRole('heading', { level: 1, name: /^Nohy/ })).toBeVisible();
   });
 
-  it('toggles play/pause on the exercise view', async () => {
-    const user = userEvent.setup();
-    window.location.hash = '#/den/2026-11-18/cvik/bench-press';
-    render(<App today="2026-11-10" />);
-    const button = screen.getByRole('button', { name: 'Pozastaviť animáciu' });
-    expect(button).toHaveAttribute('aria-pressed', 'true');
-    await user.click(button);
-    expect(screen.getByRole('button', { name: 'Prehrať animáciu' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    );
-  });
-
-  it('starts paused when the user prefers reduced motion', () => {
-    vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('reduce'),
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
-    window.location.hash = '#/den/2026-11-16/cvik/back-squat';
-    render(<App today="2026-11-10" />);
-    expect(screen.getByRole('button', { name: 'Prehrať animáciu' })).toBeVisible();
-  });
-
   it('shows cardio guidance and a rest day', () => {
     window.location.hash = '#/den/2026-11-21';
     render(<App today="2026-11-10" />);
     expect(screen.getByRole('heading', { level: 1, name: 'Beh – intervaly' })).toBeVisible();
     expect(screen.getAllByText(/HRmax/).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: 'Rotoped (alternatíva k behu)' })).toHaveLength(1);
     go('#/den/2026-11-22');
     expect(screen.getByRole('heading', { level: 1, name: 'Odpočinok' })).toBeVisible();
     expect(screen.getByText('Dnes žiadny tréning. Oddychuj a regeneruj.')).toBeVisible();
+  });
+
+  it('explains when a deep-linked exercise is not planned for that day', () => {
+    window.location.hash = '#/den/2026-11-17/cvik/back-squat';
+    render(<App today="2026-11-10" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Drep s veľkou činkou' })).toBeVisible();
+    const notice = screen.getByRole('note');
+    expect(notice).toHaveTextContent('Tento cvik nie je v pláne na tento deň');
+    expect(within(notice).getByRole('link', { name: 'Zobraziť tréning dňa' })).toHaveAttribute(
+      'href',
+      '#/den/2026-11-17',
+    );
+    expect(screen.queryByLabelText('Predpis na dnes')).toBeNull();
+    const crumbs = screen.getByRole('navigation', { name: 'Navigácia' });
+    expect(within(crumbs).getAllByRole('link')).toHaveLength(1);
+
+    go('#/den/2025-01-06/cvik/back-squat');
+    expect(screen.getByRole('note')).toHaveTextContent('Tento deň nie je v aktuálnom pláne');
+  });
+
+  it('shows the carry distance instead of a tempo', () => {
+    window.location.hash = '#/den/2026-11-20';
+    render(<App today="2026-11-10" />);
+    expect(screen.getByText('30 m (≈ 30 s)')).toBeVisible();
+    expect(screen.queryByText('výdrž')).toBeNull();
   });
 
   it('handles unknown routes, days outside the plan and unknown exercises', () => {

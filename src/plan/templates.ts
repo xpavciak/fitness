@@ -28,7 +28,7 @@ export const WEEKS: Record<WeekNumber, WeekInfo> = {
     week: 4,
     name: 'Odľahčenie',
     focus:
-      'Deload: o ~40 % menej sérií, o ~10 % nižšia váha a viac mobility. Telo regeneruje a rastie.',
+      'Deload: o ~45 % menej sérií, o ~10 % nižšia váha a viac mobility. Telo regeneruje a rastie.',
     rir: '4',
   },
 };
@@ -67,6 +67,8 @@ export const REP_SCHEMES: Record<RepScheme, [RepWeek, RepWeek, RepWeek, RepWeek]
     { label: '45 s', value: 45 },
     { label: '30 s', value: 30 },
   ],
+  // Carries: value is seconds; a loaded farmer's walk covers roughly 1 m/s,
+  // so 30 m ≈ 30 s of work.
   carry: [
     { label: '30 m', value: 30 },
     { label: '40 m', value: 40 },
@@ -92,6 +94,8 @@ export interface StrengthTemplate {
   baseSets: number;
   scheme: RepScheme;
   restSeconds: number;
+  /** Longer rest in the peak week (heavy 4–6 rep sets). Defaults to restSeconds. */
+  peakRestSeconds?: number;
   tempo: string;
   cue: string;
 }
@@ -125,6 +129,7 @@ export const GYM_SESSIONS: Record<GymSessionKey, GymSessionTemplate> = {
         baseSets: 4,
         scheme: 'strength',
         restSeconds: 150,
+        peakRestSeconds: 180,
         tempo: '3-1-1',
         cue: '3 s dole, 1 s pauza v drepe, výbušne hore.',
       },
@@ -179,6 +184,7 @@ export const GYM_SESSIONS: Record<GymSessionKey, GymSessionTemplate> = {
         baseSets: 4,
         scheme: 'strength',
         restSeconds: 150,
+        peakRestSeconds: 180,
         tempo: '2-1-1',
         cue: '2 s dole, krátky dotyk hrudníka, plynulo hore.',
       },

@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from 'react';
-import { generatePlan, resolvePlanStart, type TrainingPlan } from '../plan';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { generatePlan, isSelectableStart, resolvePlanStart, type TrainingPlan } from '../plan';
 
 export const START_STORAGE_KEY = 'treningovy-plan:start';
 
@@ -21,9 +21,26 @@ function storeStart(start: string): void {
   }
 }
 
+export interface PlanState {
+  plan: TrainingPlan;
+  /** Choose a new start Monday (this week or next week). */
+  setStart: (start: string) => void;
+}
+
 /** The current plan; its start date is persisted so the month stays stable. */
-export function usePlan(todayIso: string): TrainingPlan {
-  const start = useMemo(() => resolvePlanStart(readStoredStart(), todayIso), [todayIso]);
+export function usePlan(todayIso: string): PlanState {
+  const [chosen, setChosen] = useState<string | null>(readStoredStart);
+  const start = resolvePlanStart(chosen, todayIso);
   useEffect(() => storeStart(start), [start]);
-  return useMemo(() => generatePlan(start), [start]);
+  const plan = useMemo(() => generatePlan(start), [start]);
+  const setStart = useCallback(
+    (next: string) => {
+      if (!isSelectableStart(next, todayIso)) {
+        throw new Error(`Invalid plan start: ${next}`);
+      }
+      setChosen(next);
+    },
+    [todayIso],
+  );
+  return { plan, setStart };
 }

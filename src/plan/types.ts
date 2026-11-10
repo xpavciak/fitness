@@ -21,12 +21,17 @@ export type MuscleGroup =
 /** Identifies a keyframed hologram clip. See src/hologram/clips.ts. */
 export type AnimationId =
   | 'squat'
+  | 'squat-hold'
   | 'hinge'
   | 'bench-press'
   | 'overhead-press'
   | 'row'
   | 'pulldown'
   | 'lunge'
+  | 'split-squat-bench'
+  | 'lunge-rotation'
+  | 'incline-press'
+  | 'one-arm-row'
   | 'plank'
   | 'push-up'
   | 'curl'
@@ -50,6 +55,8 @@ export interface Exercise {
   /** 3-5 technique steps. */
   steps: string[];
   mistakes: string[];
+  /** Safety setup and how to bail out of a failed rep (heavy barbell lifts). */
+  safety?: string[];
   easier: string;
   harder: string;
   animation: AnimationId;
@@ -65,8 +72,10 @@ export interface StrengthItem {
   kind: 'strength';
   exerciseId: string;
   sets: number;
-  /** Display label, e.g. "6–8" or "40 s". */
+  /** Display label, e.g. "6–8", "40 s" or "30 m". */
   reps: string;
+  /** What `reps` measures: repetitions, a timed hold or a carried distance. */
+  measure: 'reps' | 'hold' | 'distance';
   /** Work seconds per set (per side for unilateral exercises), used for timing. */
   workSecondsPerSet: number;
   restSeconds: number;
@@ -86,6 +95,8 @@ export interface TimedItem {
   exerciseId?: string;
   /** Intensity guidance, e.g. "RPE 3–4, 60–70 % HRmax". */
   intensity?: string;
+  /** Equivalent alternative (e.g. stationary bike instead of running). */
+  alternativeExerciseId?: string;
 }
 
 export type WorkoutItem = StrengthItem | TimedItem;

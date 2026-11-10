@@ -1,22 +1,52 @@
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
-import { useEffect, useState } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { useEffect, useRef, useState } from 'react';
 import type { AnimationId } from '../plan/types';
 import { HologramController } from './controller';
+import { OrbitCamera } from './orbitCamera';
+
+/** Degrees per press of the rotate buttons. */
+export const ROTATE_STEP_DEGREES = 30;
 
 export interface HologramStageProps {
   animation: AnimationId;
   playing: boolean;
   /** Disables flicker/scanline motion (prefers-reduced-motion). */
   reducedMotion: boolean;
+  /** Signed count of rotate-button presses; each step turns the view 30°. */
+  turns: number;
   label: string;
 }
 
-function HologramScene({ animation, playing, reducedMotion }: Omit<HologramStageProps, 'label'>) {
+function CameraControls({ turns }: { turns: number }) {
+  const camera = useThree((s) => s.camera);
+  const domElement = useThree((s) => s.gl.domElement);
+  const invalidate = useThree((s) => s.invalidate);
+  const [orbit] = useState(() => new OrbitCamera(camera, domElement, () => invalidate()));
+  const appliedTurns = useRef(0);
+
+  useEffect(() => () => orbit.dispose(), [orbit]);
+  useEffect(() => {
+    const delta = turns - appliedTurns.current;
+    appliedTurns.current = turns;
+    if (delta !== 0) orbit.rotateBy(delta * ROTATE_STEP_DEGREES);
+  }, [orbit, turns]);
+
+  useFrame(() => orbit.update());
+  return null;
+}
+
+function HologramScene({
+  animation,
+  playing,
+  reducedMotion,
+}: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'>) {
   const [controller] = useState(() => new HologramController(animation));
+  const invalidate = useThree((s) => s.invalidate);
 
   useEffect(() => controller.setAnimation(animation), [controller, animation]);
   useEffect(() => () => controller.dispose(), [controller]);
+  // In 'demand' mode a frame is only drawn when requested.
+  useEffect(() => invalidate(), [invalidate, animation, playing, reducedMotion]);
 
   useFrame((_, delta) => controller.update(delta, playing, reducedMotion));
 
@@ -42,10 +72,13 @@ function HologramScene({ animation, playing, reducedMotion }: Omit<HologramStage
 }
 
 /** 3D hologram canvas. Default export so it can be lazy-loaded. */
-export default function HologramStage({ label, ...sceneProps }: HologramStageProps) {
+export default function HologramStage({ label, turns, ...sceneProps }: HologramStageProps) {
   return (
     <Canvas
       className="hologram-canvas"
+      // Render continuously only while the animation plays; otherwise on demand
+      // (camera moves, prop changes) to save battery.
+      frameloop={sceneProps.playing ? 'always' : 'demand'}
       camera={{ position: [3.0, 1.5, 2.4], fov: 40, near: 0.1, far: 50 }}
       dpr={[1, 2]}
       gl={{ antialias: true, alpha: true }}
@@ -53,14 +86,7 @@ export default function HologramStage({ label, ...sceneProps }: HologramStagePro
       aria-label={label}
     >
       <HologramScene {...sceneProps} />
-      <OrbitControls
-        target={[0, 0.8, 0]}
-        enablePan={false}
-        enableDamping
-        minDistance={2}
-        maxDistance={7}
-        maxPolarAngle={Math.PI * 0.53}
-      />
+      <CameraControls turns={turns} />
     </Canvas>
   );
 }

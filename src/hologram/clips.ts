@@ -208,7 +208,155 @@ const cat = { ...allFours, spineP: 12, chestP: 18, neckP: 40, ...both({ armP: 12
 // Thoracic rotation with arms held in front.
 const rotArms = both({ armP: 88, armS: 4, foreP: 92, foreS: -6 });
 
+// Deep bodyweight squat hold: elbows push the knees out, hands together.
+const squatHoldBase = pose(
+  { spineP: 30, neckP: -25 },
+  both({
+    armP: 62,
+    armS: 22,
+    foreP: 112,
+    foreS: -24,
+    thighP: 108,
+    thighS: 22,
+    shinP: -40,
+    shinS: 8,
+  }),
+);
+const squatHoldBreath = { ...squatHoldBase, spineP: 24, neckP: -20 };
+
+// Lunge with rotation ("world's greatest stretch"): right hand on the floor,
+// left arm rotates to the ceiling.
+const wgsLegs: Pose = {
+  lThighP: 82,
+  lThighS: 6,
+  lShinP: -22,
+  rThighP: -42,
+  rShinP: -46,
+  rFootP: 40,
+};
+const wgsDown = pose(wgsLegs, {
+  spineP: 80,
+  neckP: -20,
+  rArmP: 80,
+  rArmS: 0,
+  rForeP: 80,
+  rForeS: 0,
+  lArmP: 80,
+  lArmS: 2,
+  lForeP: 80,
+  lForeS: 2,
+});
+const wgsOpen = pose(wgsLegs, {
+  spineP: 80,
+  spineT: 62,
+  neckP: -10,
+  rArmP: 82,
+  rArmS: 18,
+  rForeP: 82,
+  rForeS: 18,
+  lArmP: 80,
+  lArmS: 92,
+  lForeP: 80,
+  lForeS: 94,
+});
+
+// Incline dumbbell press: torso reclined 60° from upright (bench at ~30°).
+const inclineBase: Pose = {
+  rootP: -60,
+  rootY: 0.62,
+  ...both({ thighP: 20, thighS: 12, shinP: -60, shinS: 6, footP: 60 }),
+};
+const inclineTop = { ...inclineBase, ...both({ armP: 90, armS: 16, foreP: 90, foreS: 16 }) };
+const inclineBottom = { ...inclineBase, ...both({ armP: 16, armS: 60, foreP: 95, foreS: 0 }) };
+
+// One-arm dumbbell row: left knee and left hand on the bench, right arm rows.
+const oneArmBase: Pose = {
+  rootY: 0.99,
+  spineP: 70,
+  neckP: -20,
+  lArmP: 70,
+  lArmS: 6,
+  lForeP: 70,
+  lForeS: 6,
+  lThighP: 30,
+  lThighS: 2,
+  lShinP: -90,
+  lFootP: 170,
+  rThighP: 5,
+  rThighS: 8,
+  rShinP: 0,
+  rShinS: 6,
+};
+const oneArmDown = { ...oneArmBase, rArmP: 70, rArmS: 4, rForeP: 70, rForeS: 4 };
+const oneArmUp = { ...oneArmBase, rArmP: -22, rArmS: 12, rForeP: 45, rForeS: 4 };
+
+// Bulgarian split squat: rear (right) foot laces-down on a bench behind.
+const splitArms = both({ armP: 0, armS: 8, foreP: 0, foreS: 8 });
+const splitTop = pose(splitArms, {
+  spineP: 8,
+  lThighP: 30,
+  lShinP: -5,
+  rThighP: -52,
+  rShinP: -56,
+  rFootP: 155,
+});
+const splitBottom = pose(splitArms, {
+  spineP: 14,
+  lThighP: 86,
+  lShinP: -12,
+  rThighP: -25,
+  rShinP: -125,
+  rFootP: 155,
+});
+
 export const CLIPS: Record<AnimationId, Clip> = {
+  'squat-hold': {
+    duration: 5,
+    keyframes: [
+      { t: 0, pose: squatHoldBase },
+      { t: 0.5, pose: squatHoldBreath },
+    ],
+    grounded: true,
+    pinFeetZ: 0,
+    props: [],
+  },
+  'lunge-rotation': {
+    duration: 4.5,
+    keyframes: [
+      { t: 0, pose: wgsDown },
+      { t: 0.4, pose: wgsOpen },
+      { t: 0.6, pose: wgsOpen },
+    ],
+    grounded: true,
+    pinFeetZ: 0,
+    props: [],
+  },
+  'incline-press': {
+    duration: 3.6,
+    keyframes: rep(inclineTop, inclineBottom, 0.4, 0.52, 0.85),
+    grounded: false,
+    pinFeetZ: null,
+    props: ['incline-bench', 'dumbbells'],
+  },
+  'one-arm-row': {
+    duration: 3.2,
+    keyframes: [
+      { t: 0, pose: oneArmDown },
+      { t: 0.35, pose: oneArmUp },
+      { t: 0.5, pose: oneArmUp },
+      { t: 0.9, pose: oneArmDown },
+    ],
+    grounded: false,
+    pinFeetZ: null,
+    props: ['row-bench', 'dumbbell-right'],
+  },
+  'split-squat-bench': {
+    duration: 3.6,
+    keyframes: rep(splitTop, splitBottom, 0.4, 0.5, 0.85),
+    grounded: true,
+    pinFeetZ: 0,
+    props: ['split-bench', 'dumbbells'],
+  },
   squat: {
     duration: 4.4,
     keyframes: rep(squatTop, squatBottom, 0.42, 0.52, 0.82),

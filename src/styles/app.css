@@ -955,3 +955,106 @@ a.item__name:hover {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- fix round */
+/* OrbitControls sets touch-action: none inline; allow vertical page scroll. */
+.hologram-canvas canvas {
+  touch-action: pan-y !important;
+}
+
+.button[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.button--icon {
+  min-width: 44px;
+  padding: 10px 14px;
+  font-size: 1.15rem;
+}
+
+.stage__hint {
+  flex-basis: 100%;
+  text-align: center;
+  margin: 0;
+}
+
+.start-control {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.start-control h2 {
+  font-size: 1rem;
+  margin-bottom: 4px;
+}
+
+.start-control__hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.start-control__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.start-control__date {
+  font-weight: 500;
+  opacity: 0.85;
+}
+
+.day-card--past {
+  opacity: 0.55;
+}
+
+.day-card--past:hover,
+.day-card--past:focus-visible {
+  opacity: 1;
+}
+
+.pill--today {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+.notice {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(169, 156, 255, 0.5);
+  background: rgba(169, 156, 255, 0.1);
+}
+
+.safety-setup {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 180, 168, 0.4);
+  background: rgba(255, 120, 100, 0.07);
+}
+
+.safety-setup h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--danger);
+  margin-bottom: 6px;
+}
+
+.safety-setup ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+main:focus {
+  outline: none;
+}

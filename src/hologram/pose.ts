@@ -52,7 +52,15 @@ export interface Keyframe {
   pose: Pose;
 }
 
-export type PropKind = 'barbell' | 'dumbbells' | 'bench' | 'seat';
+export type PropKind =
+  | 'barbell'
+  | 'dumbbells'
+  | 'dumbbell-right'
+  | 'bench'
+  | 'incline-bench'
+  | 'row-bench'
+  | 'split-bench'
+  | 'seat';
 
 export interface Clip {
   /** Loop length in seconds. */
@@ -89,8 +97,9 @@ export function wrapPhase(phase: number): number {
 /**
  * Samples a clip at a normalised phase. Keyframes must be sorted and should
  * start at t = 0; the clip loops from the last keyframe back to the first.
+ * Pass `out` to reuse an object (the render loop calls this every frame).
  */
-export function samplePose(clip: Clip, phase: number): FullPose {
+export function samplePose(clip: Clip, phase: number, out: FullPose = fullPose({})): FullPose {
   const frames = clip.keyframes;
   const first = frames[0];
   if (!first) throw new Error('Clip has no keyframes');
@@ -120,10 +129,11 @@ export function samplePose(clip: Clip, phase: number): FullPose {
     }
   }
   const k = span > 0 ? smoothstep(local / span) : 0;
-  const from = fullPose(prev.pose);
-  const to = fullPose(next.pose);
-  const out = {} as FullPose;
-  for (const c of CHANNELS) out[c] = from[c] + (to[c] - from[c]) * k;
+  for (const c of CHANNELS) {
+    const from = prev.pose[c] ?? 0;
+    const to = next.pose[c] ?? 0;
+    out[c] = from + (to - from) * k;
+  }
   return out;
 }
 

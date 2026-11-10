@@ -5,15 +5,19 @@ import {
   findDay,
   formatLongDateSk,
   getExercise,
+  linkedExerciseIdsOfDay,
   type DayPlan,
-  type WorkoutItem,
   type TrainingPlan,
+  type WorkoutItem,
 } from '../plan';
 import { hrefs } from '../routing';
+import { isWebGLAvailable } from '../hologram/webgl';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { usePrefersReducedMotion } from '../hooks/usePrefersReducedMotion';
 import { Hologram } from './Hologram';
 import { APP_NAME, minutesLabel } from './labels';
 import { NotInPlan } from './NotFound';
+import { StrengthStats } from './StrengthStats';
 import { useFocusHeading } from './useFocusHeading';
 
 interface Props {
@@ -22,12 +26,13 @@ interface Props {
   exerciseId: string;
 }
 
-function findItem(day: DayPlan | undefined, exerciseId: string): WorkoutItem | undefined {
-  const items = day?.sections.flatMap((s) => s.items) ?? [];
+function findItem(day: DayPlan, exerciseId: string): WorkoutItem | undefined {
+  const items = day.sections.flatMap((s) => s.items);
   // Prefer the working prescription over warm-up mentions of the same exercise.
   return (
     items.find((i) => i.kind === 'strength' && i.exerciseId === exerciseId) ??
-    items.find((i) => i.exerciseId === exerciseId)
+    items.find((i) => i.exerciseId === exerciseId) ??
+    items.find((i) => i.kind === 'timed' && i.alternativeExerciseId === exerciseId)
   );
 }
 
@@ -36,7 +41,10 @@ function Prescription({ item }: { item: WorkoutItem }) {
     return (
       <dl className="prescription" aria-label="Predpis na dnes">
         <div>
-          <dt>Série × opakovania</dt>
+          <dt>
+            Série ×{' '}
+            {item.measure === 'reps' ? 'opakovania' : item.measure === 'hold' ? 'výdrž' : 'úsek'}
+          </dt>
           <dd>
             {item.sets} × {item.reps}
           </dd>
@@ -45,14 +53,7 @@ function Prescription({ item }: { item: WorkoutItem }) {
           <dt>Oddych</dt>
           <dd>{item.restSeconds} s</dd>
         </div>
-        <div>
-          <dt>RIR</dt>
-          <dd>{item.rir}</dd>
-        </div>
-        <div>
-          <dt>Tempo</dt>
-          <dd>{item.tempo === '0-0-0' ? 'výdrž' : item.tempo}</dd>
-        </div>
+        <StrengthStats item={item} />
       </dl>
     );
   }
@@ -72,14 +73,34 @@ function Prescription({ item }: { item: WorkoutItem }) {
   );
 }
 
+/** Why the deep-linked exercise has no prescription for this date. */
+function PlanNotice({ day, date }: { day: DayPlan | undefined; date: string }) {
+  return (
+    <p className="notice" role="note">
+      {day ? (
+        <>
+          Tento cvik nie je v pláne na tento deň ({formatLongDateSk(date)}).{' '}
+          <a href={hrefs.day(day.date)}>Zobraziť tréning dňa</a>
+        </>
+      ) : (
+        <>
+          Tento deň nie je v aktuálnom pláne. <a href={hrefs.overview()}>Späť na prehľad mesiaca</a>
+        </>
+      )}
+    </p>
+  );
+}
+
 export function ExerciseView({ plan, date, exerciseId }: Props) {
   const exercise = getExercise(exerciseId);
-  const day = findDay(plan, date);
   const heading = useFocusHeading(
     exercise ? `${exercise.name} · ${APP_NAME}` : `Cvik sa nenašiel · ${APP_NAME}`,
   );
   const reducedMotion = usePrefersReducedMotion();
+  const coarsePointer = useMediaQuery('(pointer: coarse)');
   const [playing, setPlaying] = useState(!reducedMotion);
+  const [turns, setTurns] = useState(0);
+  const [webgl, setWebgl] = useState(isWebGLAvailable);
 
   if (!exercise) {
     return (
@@ -91,8 +112,10 @@ export function ExerciseView({ plan, date, exerciseId }: Props) {
     );
   }
 
-  const item = findItem(day, exerciseId);
-  const ids = day ? exerciseIdsOfDay(day) : [];
+  const day = findDay(plan, date);
+  const inDay = day ? linkedExerciseIdsOfDay(day).includes(exerciseId) : false;
+  const item = day && inDay ? findItem(day, exerciseId) : undefined;
+  const ids = day && inDay ? exerciseIdsOfDay(day) : [];
   const index = ids.indexOf(exerciseId);
   const prevId = index > 0 ? ids[index - 1] : undefined;
   const nextId = index >= 0 && index < ids.length - 1 ? ids[index + 1] : undefined;
@@ -101,7 +124,7 @@ export function ExerciseView({ plan, date, exerciseId }: Props) {
     <article className="exercise" aria-labelledby="exercise-title">
       <nav className="crumbs" aria-label="Navigácia">
         <a href={hrefs.overview()}>Prehľad</a>
-        {day && (
+        {day && inDay && (
           <>
             <span aria-hidden="true"> / </span>
             <a href={hrefs.day(day.date)}>
@@ -116,6 +139,7 @@ export function ExerciseView({ plan, date, exerciseId }: Props) {
         <h1 id="exercise-title" ref={heading} tabIndex={-1}>
           {exercise.name}
         </h1>
+        {!inDay && <PlanNotice day={day} date={date} />}
         {item && <Prescription item={item} />}
         {item?.kind === 'strength' && <p className="exercise__cue">{item.cue}</p>}
       </header>
@@ -127,20 +151,45 @@ export function ExerciseView({ plan, date, exerciseId }: Props) {
               animation={exercise.animation}
               playing={playing}
               reducedMotion={reducedMotion}
+              turns={turns}
               exerciseName={exercise.name}
+              webgl={webgl}
+              onUnavailable={() => setWebgl(false)}
             />
           </div>
-          <div className="stage__controls">
-            <button
-              type="button"
-              className="button"
-              aria-pressed={playing}
-              onClick={() => setPlaying((p) => !p)}
-            >
-              {playing ? 'Pozastaviť animáciu' : 'Prehrať animáciu'}
-            </button>
-            <span className="stage__hint">Ťahaním otočíš postavu, kolieskom priblížiš.</span>
-          </div>
+          {webgl && (
+            <div className="stage__controls">
+              <button
+                type="button"
+                className="button button--icon"
+                aria-label="Otočiť postavu doľava"
+                onClick={() => setTurns((t) => t - 1)}
+              >
+                <span aria-hidden="true">←</span>
+              </button>
+              <button
+                type="button"
+                className="button"
+                aria-pressed={playing}
+                onClick={() => setPlaying((p) => !p)}
+              >
+                {playing ? 'Pozastaviť animáciu' : 'Prehrať animáciu'}
+              </button>
+              <button
+                type="button"
+                className="button button--icon"
+                aria-label="Otočiť postavu doprava"
+                onClick={() => setTurns((t) => t + 1)}
+              >
+                <span aria-hidden="true">→</span>
+              </button>
+              <p className="stage__hint">
+                {coarsePointer
+                  ? 'Potiahnutím prstom do strany otočíš postavu.'
+                  : 'Ťahaním myšou alebo šípkami otočíš postavu.'}
+              </p>
+            </div>
+          )}
         </section>
 
         <section className="panel panel--steps" aria-labelledby="steps-title">
@@ -150,6 +199,16 @@ export function ExerciseView({ plan, date, exerciseId }: Props) {
               <li key={step}>{step}</li>
             ))}
           </ol>
+          {exercise.safety && (
+            <div className="safety-setup">
+              <h3>Bezpečnosť</h3>
+              <ul>
+                {exercise.safety.map((tip) => (
+                  <li key={tip}>{tip}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
         <section className="panel panel--muscles" aria-labelledby="muscles-title">

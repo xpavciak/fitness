@@ -52,8 +52,12 @@ const EXERCISE_LIST: Exercise[] = [
       'Zaguľatený spodný chrbát v najnižšom bode.',
       'Príliš plytký drep pri príliš veľkej váhe.',
     ],
+    safety: [
+      'Drep rob v klietke alebo stojane s bezpečnostnými tyčami nastavenými tesne pod najnižšiu polohu drepu, alebo s dopomocou (spotterom) za sebou.',
+      'Keď opakovanie nezvládneš, kontrolovane klesni do drepu a polož činku na bezpečnostné tyče. Činku neodhadzuj dozadu, ak to nemáš nacvičené.',
+    ],
     easier: 'Drep s jednoručkou pred hrudníkom (goblet drep)',
-    harder: 'Predný drep s veľkou činkou alebo drep s pauzou dole',
+    harder: 'Predný drep s veľkou činkou alebo pomalšie tempo 4-2-1',
     animation: 'squat',
   },
   {
@@ -73,6 +77,11 @@ const EXERCISE_LIST: Exercise[] = [
       'Odrážanie činky od hrudníka.',
       'Lakte roztiahnuté do 90° od tela (záťaž na ramenný kĺb).',
       'Zdvíhanie zadku z lavice.',
+    ],
+    safety: [
+      'Nastav bezpečnostné ramená stojana tesne pod úroveň hrudníka v spodnej polohe, alebo cvič so spotterom.',
+      'Ak cvičíš sám(a) bez bezpečnostných ramien, nepoužívaj uzávery kotúčov – v núdzi môžeš kotúče z jednej strany zošmyknúť.',
+      'Keď opakovanie nezvládneš, polož činku na bezpečnostné ramená alebo ju spusti na hrudník a vyval po bruchu k bokom.',
     ],
     easier: 'Kľuky alebo tlak s jednoručkami na lavici',
     harder: 'Tlak na lavici s 2 s pauzou na hrudníku',
@@ -261,7 +270,7 @@ const EXERCISE_LIST: Exercise[] = [
     ],
     easier: 'Statický výpad bez záťaže',
     harder: 'Bulharský drep s veľkou činkou alebo s pauzou dole',
-    animation: 'lunge',
+    animation: 'split-squat-bench',
     unilateral: true,
   },
   {
@@ -283,7 +292,7 @@ const EXERCISE_LIST: Exercise[] = [
     ],
     easier: 'Kľuky s rukami na vyvýšenej podložke',
     harder: 'Tlak na šikmej lavici s veľkou činkou',
-    animation: 'bench-press',
+    animation: 'incline-press',
   },
   {
     id: 'one-arm-dumbbell-row',
@@ -304,7 +313,7 @@ const EXERCISE_LIST: Exercise[] = [
     ],
     easier: 'Príťah na kladke v sede',
     harder: 'Príťah s pauzou 2 s na vrchu',
-    animation: 'row',
+    animation: 'one-arm-row',
     unilateral: true,
   },
   {
@@ -499,7 +508,7 @@ const EXERCISE_LIST: Exercise[] = [
     mistakes: ['Prepadnuté boky.', 'Rotácia len rukou bez hrudnej chrbtice.'],
     easier: 'Výpad s oporou o koleno a bez rotácie',
     harder: 'Pridaj vystretie prednej nohy (strečing zadného stehna)',
-    animation: 'lunge',
+    animation: 'lunge-rotation',
     unilateral: true,
   },
   {
@@ -534,21 +543,25 @@ const EXERCISE_LIST: Exercise[] = [
     mistakes: ['Odliepanie piat.', 'Úplne guľatý chrbát.'],
     easier: 'Drep s oporou o rám alebo s podloženými pätami',
     harder: 'Hlboký drep s rotáciou trupu a vzpažením',
-    animation: 'squat',
+    animation: 'squat-hold',
   },
 ];
 
-export const EXERCISES: Readonly<Record<string, Exercise>> = Object.freeze(
-  Object.fromEntries(EXERCISE_LIST.map((exercise) => [exercise.id, exercise])),
+/**
+ * Lookup by id. A Map (not a plain object) so ids such as "constructor" or
+ * "__proto__" coming from URLs never resolve to Object.prototype members.
+ */
+const EXERCISES_BY_ID: ReadonlyMap<string, Exercise> = new Map(
+  EXERCISE_LIST.map((exercise) => [exercise.id, exercise]),
 );
 
 export function getExercise(id: string): Exercise | undefined {
-  return EXERCISES[id];
+  return EXERCISES_BY_ID.get(id);
 }
 
 /** Like getExercise but throws for unknown ids (use for internal plan data). */
 export function requireExercise(id: string): Exercise {
-  const exercise = EXERCISES[id];
+  const exercise = EXERCISES_BY_ID.get(id);
   if (!exercise) {
     throw new Error(`Unknown exercise id: ${id}`);
   }

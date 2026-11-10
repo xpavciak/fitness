@@ -12,7 +12,7 @@ import {
   type BufferGeometry,
   type Material,
 } from 'three';
-import { limbDirection, type Clip, type FullPose } from './pose';
+import { limbDirection, type Clip, type FullPose, type PropKind } from './pose';
 
 /**
  * Procedural humanoid built from capsules and spheres (no external assets).
@@ -57,7 +57,16 @@ export interface Rig {
   arms: [ArmParts, ArmParts];
   legs: [LegParts, LegParts];
   groundAnchors: Object3D[];
-  props: { barbell: Object3D; dumbbells: Object3D[]; bench: Object3D; seat: Object3D };
+  props: {
+    barbell: Object3D;
+    /** [left hand, right hand] */
+    dumbbells: [Object3D, Object3D];
+    bench: Object3D;
+    inclineBench: Object3D;
+    rowBench: Object3D;
+    splitBench: Object3D;
+    seat: Object3D;
+  };
   dispose: () => void;
 }
 
@@ -188,8 +197,7 @@ export function createRig(bodyMaterial: Material, propMaterial: Material): Rig {
   }
   container.add(barbell);
 
-  const dumbbells: Object3D[] = [];
-  for (const arm of arms) {
+  const makeDumbbell = (arm: ArmParts): Object3D => {
     const db = new Group();
     const handle = new Mesh(track(new CylinderGeometry(0.014, 0.014, 0.26, 8)), propMaterial);
     handle.rotation.z = Math.PI / 2;
@@ -201,19 +209,50 @@ export function createRig(bodyMaterial: Material, propMaterial: Material): Rig {
       db.add(bell);
     }
     arm.hand.add(db);
-    dumbbells.push(db);
-  }
+    return db;
+  };
+  const dumbbells: [Object3D, Object3D] = [makeDumbbell(arms[0]), makeDumbbell(arms[1])];
 
+  /** Box helper for benches: size and centre position in world metres. */
+  const box = (
+    parent: Object3D,
+    size: [number, number, number],
+    pos: [number, number, number],
+    rotX = 0,
+  ) => {
+    const mesh = new Mesh(track(new BoxGeometry(...size)), propMaterial);
+    mesh.position.set(...pos);
+    mesh.rotation.x = rotX;
+    parent.add(mesh);
+    return mesh;
+  };
+
+  // Flat bench under a lying lifter (bench press): head towards -z.
   const bench = new Group();
-  const benchTop = new Mesh(track(new BoxGeometry(0.32, 0.08, 1.2)), propMaterial);
-  benchTop.position.set(0, 0.46, -0.3);
-  bench.add(benchTop);
-  for (const z of [-0.8, 0.2]) {
-    const leg = new Mesh(track(new BoxGeometry(0.06, 0.42, 0.06)), propMaterial);
-    leg.position.set(0, 0.21, z);
-    bench.add(leg);
-  }
+  box(bench, [0.32, 0.08, 1.2], [0, 0.46, -0.3]);
+  box(bench, [0.06, 0.42, 0.06], [0, 0.21, -0.8]);
+  box(bench, [0.06, 0.42, 0.06], [0, 0.21, 0.2]);
   container.add(bench);
+
+  // Incline bench (~30°): seat plus a backrest aligned with the reclined torso.
+  const inclineBench = new Group();
+  box(inclineBench, [0.34, 0.06, 0.36], [0, 0.5, 0.02]);
+  box(inclineBench, [0.34, 0.9, 0.06], [0, 0.72, -0.4], -Math.PI / 3);
+  box(inclineBench, [0.06, 0.48, 0.06], [0, 0.24, 0.02]);
+  container.add(inclineBench);
+
+  // Flat bench along the left side for the one-arm row (knee and hand on it).
+  const rowBench = new Group();
+  box(rowBench, [0.32, 0.08, 1.05], [0.14, 0.47, 0.11]);
+  box(rowBench, [0.06, 0.43, 0.06], [0.14, 0.215, -0.3]);
+  box(rowBench, [0.06, 0.43, 0.06], [0.14, 0.215, 0.52]);
+  container.add(rowBench);
+
+  // Low bench behind the lifter for the rear foot of the Bulgarian split squat.
+  const splitBench = new Group();
+  box(splitBench, [0.34, 0.06, 0.42], [-0.095, 0.27, -0.6]);
+  box(splitBench, [0.06, 0.24, 0.06], [-0.095, 0.12, -0.6]);
+  container.add(splitBench);
 
   const seat = new Group();
   const seatTop = new Mesh(track(new BoxGeometry(0.4, 0.06, 0.38)), propMaterial);
@@ -232,24 +271,30 @@ export function createRig(bodyMaterial: Material, propMaterial: Material): Rig {
     arms,
     legs,
     groundAnchors,
-    props: { barbell, dumbbells, bench, seat },
+    props: { barbell, dumbbells, bench, inclineBench, rowBench, splitBench, seat },
     dispose: () => geometries.forEach((g) => g.dispose()),
   };
 }
 
+// Scratch objects reused every frame (applyPose runs at display refresh rate).
 const tmpDir = new Vector3();
 const tmpQ = new Quaternion();
 const tmpInv = new Quaternion();
+const tmpLowerAbs = new Quaternion();
 const tmpEuler = new Euler();
 const tmpA = new Vector3();
 const tmpB = new Vector3();
+const X_AXIS = new Vector3(1, 0, 0);
 
 function directionQuaternion(out: Quaternion, pitch: number, side: number, sign: 1 | -1) {
   const [x, y, z] = limbDirection(pitch, side, sign);
   return out.setFromUnitVectors(DOWN, tmpDir.set(x, y, z));
 }
 
-/** Two-segment limb: upper direction in parent frame, lower direction in the same frame. */
+/**
+ * Two-segment limb: both directions are given in the parent frame. Returns the
+ * lower segment's absolute orientation in a shared scratch quaternion.
+ */
 function poseLimb(
   upper: Object3D,
   lower: Object3D,
@@ -260,10 +305,24 @@ function poseLimb(
   sign: 1 | -1,
 ): Quaternion {
   directionQuaternion(upper.quaternion, upperP, upperS, sign);
-  const lowerAbs = directionQuaternion(new Quaternion(), lowerP, lowerS, sign);
+  const lowerAbs = directionQuaternion(tmpLowerAbs, lowerP, lowerS, sign);
   tmpInv.copy(upper.quaternion).invert();
   lower.quaternion.copy(tmpInv).multiply(lowerAbs);
   return lowerAbs;
+}
+
+function poseLeg(
+  leg: LegParts,
+  thighP: number,
+  thighS: number,
+  shinP: number,
+  shinS: number,
+  footP: number,
+  sign: 1 | -1,
+): void {
+  const shinAbs = poseLimb(leg.thigh, leg.shin, thighP, thighS, shinP, shinS, sign);
+  tmpQ.setFromEuler(tmpEuler.set(footP * DEG, 0, 0));
+  leg.foot.quaternion.copy(shinAbs.invert()).multiply(tmpQ);
 }
 
 export function applyPose(rig: Rig, pose: FullPose, clip: Clip): void {
@@ -279,15 +338,8 @@ export function applyPose(rig: Rig, pose: FullPose, clip: Clip): void {
   poseLimb(rArm.upper, rArm.fore, pose.rArmP, pose.rArmS, pose.rForeP, pose.rForeS, -1);
 
   const [lLeg, rLeg] = rig.legs;
-  const legs: Array<[LegParts, number, number, number, number, number, 1 | -1]> = [
-    [lLeg, pose.lThighP, pose.lThighS, pose.lShinP, pose.lShinS, pose.lFootP, 1],
-    [rLeg, pose.rThighP, pose.rThighS, pose.rShinP, pose.rShinS, pose.rFootP, -1],
-  ];
-  for (const [leg, tp, ts, sp, ss, fp, sign] of legs) {
-    const shinAbs = poseLimb(leg.thigh, leg.shin, tp, ts, sp, ss, sign);
-    tmpQ.setFromEuler(tmpEuler.set(fp * DEG, 0, 0));
-    leg.foot.quaternion.copy(shinAbs.invert()).multiply(tmpQ);
-  }
+  poseLeg(lLeg, pose.lThighP, pose.lThighS, pose.lShinP, pose.lShinS, pose.lFootP, 1);
+  poseLeg(rLeg, pose.rThighP, pose.rThighS, pose.rShinP, pose.rShinS, pose.rFootP, -1);
 
   rig.container.updateMatrixWorld(true);
 
@@ -308,21 +360,27 @@ export function applyPose(rig: Rig, pose: FullPose, clip: Clip): void {
   updateProps(rig, clip);
 }
 
+function hasProp(clip: Clip, kind: PropKind): boolean {
+  return clip.props.includes(kind);
+}
+
 function updateProps(rig: Rig, clip: Clip): void {
   const { props } = rig;
-  const active = new Set(clip.props);
-  props.barbell.visible = active.has('barbell');
-  props.bench.visible = active.has('bench');
-  props.seat.visible = active.has('seat');
-  const showDumbbells = active.has('dumbbells');
-  props.dumbbells.forEach((db) => (db.visible = showDumbbells));
+  props.barbell.visible = hasProp(clip, 'barbell');
+  props.bench.visible = hasProp(clip, 'bench');
+  props.inclineBench.visible = hasProp(clip, 'incline-bench');
+  props.rowBench.visible = hasProp(clip, 'row-bench');
+  props.splitBench.visible = hasProp(clip, 'split-bench');
+  props.seat.visible = hasProp(clip, 'seat');
+  const [leftDumbbell, rightDumbbell] = props.dumbbells;
+  leftDumbbell.visible = hasProp(clip, 'dumbbells');
+  rightDumbbell.visible = hasProp(clip, 'dumbbells') || hasProp(clip, 'dumbbell-right');
 
   if (props.barbell.visible) {
     const l = rig.arms[0].hand.getWorldPosition(tmpA);
     const r = rig.arms[1].hand.getWorldPosition(tmpB);
     props.barbell.position.copy(l).add(r).multiplyScalar(0.5);
-    const dir = l.sub(r).normalize();
-    props.barbell.quaternion.setFromUnitVectors(new Vector3(1, 0, 0), dir);
+    props.barbell.quaternion.setFromUnitVectors(X_AXIS, l.sub(r).normalize());
   }
   if (props.seat.visible) {
     const p = rig.body.getWorldPosition(tmpA);

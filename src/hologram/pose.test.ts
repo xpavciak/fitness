@@ -16,6 +16,12 @@ const clip: Clip = {
 };
 
 describe('samplePose', () => {
+  it('writes into a provided output object (no per-frame allocation)', () => {
+    const out = samplePose(clip, 0);
+    expect(samplePose(clip, 0.5, out)).toBe(out);
+    expect(out.lArmP).toBe(100);
+  });
+
   it('returns keyframe values exactly at keyframe times', () => {
     expect(samplePose(clip, 0).lArmP).toBe(0);
     expect(samplePose(clip, 0.5).lArmP).toBe(100);
@@ -84,6 +90,38 @@ describe('clip library', () => {
       });
       expect(moved, `${id} should animate`).toBe(true);
     }
+  });
+
+  it('shows props that match each exercise’s equipment', () => {
+    for (const ex of listExercises()) {
+      const props = getClip(ex.animation).props;
+      // Check the primary option, e.g. "Veľká činka alebo jednoručky" -> barbell.
+      const equipment = (ex.equipment.toLowerCase().split(' alebo ')[0] ?? '').trim();
+      if (equipment.startsWith('bez náradia')) expect(props, ex.id).toEqual([]);
+      if (equipment.startsWith('veľká činka')) expect(props, ex.id).toContain('barbell');
+      if (/jednoručk/.test(equipment)) {
+        expect(
+          props.some((p) => p === 'dumbbells' || p === 'dumbbell-right'),
+          ex.id,
+        ).toBe(true);
+      }
+      if (/lavic/.test(equipment)) {
+        expect(
+          props.some((p) => p.endsWith('bench')),
+          ex.id,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('uses dedicated clips for the reviewed mismatches', () => {
+    const anim = (id: string) => listExercises().find((e) => e.id === id)?.animation;
+    expect(anim('deep-squat-hold')).toBe('squat-hold');
+    expect(anim('worlds-greatest-stretch')).toBe('lunge-rotation');
+    expect(anim('incline-dumbbell-press')).toBe('incline-press');
+    expect(anim('one-arm-dumbbell-row')).toBe('one-arm-row');
+    expect(anim('bulgarian-split-squat')).toBe('split-squat-bench');
+    expect(getClip('one-arm-row').props).toEqual(['row-bench', 'dumbbell-right']);
   });
 
   it('maps key exercises to recognisable patterns', () => {

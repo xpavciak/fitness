@@ -1,6 +1,7 @@
 import { getExercise, type StrengthItem, type TimedItem, type WorkoutItem } from '../plan';
 import { hrefs } from '../routing';
 import { minutesLabel } from './labels';
+import { StrengthStats } from './StrengthStats';
 
 function StrengthRow({ item, date }: { item: StrengthItem; date: string }) {
   const exercise = getExercise(item.exerciseId);
@@ -11,7 +12,10 @@ function StrengthRow({ item, date }: { item: StrengthItem; date: string }) {
         <a className="item__name" href={hrefs.exercise(date, item.exerciseId)}>
           {name}
         </a>
-        <span className="item__dose" aria-label={`${item.sets} série po ${item.reps}`}>
+        <span
+          className="item__dose"
+          aria-label={`${item.sets} ${item.sets >= 5 ? 'sérií' : 'série'} po ${item.reps}`}
+        >
           {item.sets} × {item.reps}
         </span>
       </div>
@@ -20,14 +24,7 @@ function StrengthRow({ item, date }: { item: StrengthItem; date: string }) {
           <dt>Oddych</dt>
           <dd>{item.restSeconds} s</dd>
         </div>
-        <div>
-          <dt>RIR</dt>
-          <dd>{item.rir}</dd>
-        </div>
-        <div>
-          <dt>Tempo</dt>
-          <dd>{item.tempo === '0-0-0' ? 'výdrž' : item.tempo}</dd>
-        </div>
+        <StrengthStats item={item} />
       </dl>
       <p className="item__cue">{item.cue}</p>
       {exercise?.unilateral && (
@@ -52,6 +49,14 @@ function TimedRow({ item, date }: { item: TimedItem; date: string }) {
       </div>
       <p className="item__cue">{item.detail}</p>
       {item.intensity && <p className="item__intensity">{item.intensity}</p>}
+      {item.alternativeExerciseId && (
+        <p className="item__note">
+          Alternatíva:{' '}
+          <a href={hrefs.exercise(date, item.alternativeExerciseId)}>
+            {getExercise(item.alternativeExerciseId)?.name ?? item.alternativeExerciseId}
+          </a>
+        </p>
+      )}
     </li>
   );
 }

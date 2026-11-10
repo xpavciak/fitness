@@ -14,6 +14,14 @@ export type Route =
 
 const EXERCISE_ID = /^[a-z0-9-]+$/;
 
+/**
+ * App routes always start with "#/". Other hashes (e.g. "#obsah") are in-page
+ * anchors and must not change the route.
+ */
+export function isRouteHash(hash: string): boolean {
+  return hash === '' || hash === '#' || hash.startsWith('#/');
+}
+
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '') || '/';
   if (path === '/' || path === '') return { name: 'overview' };

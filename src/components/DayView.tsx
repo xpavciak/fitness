@@ -7,7 +7,13 @@ import { SafetyNote } from './SafetyNote';
 import { WorkoutItemRow } from './WorkoutItemRow';
 import { useFocusHeading } from './useFocusHeading';
 
-export function DayView({ plan, date }: { plan: TrainingPlan; date: string }) {
+interface DayViewProps {
+  plan: TrainingPlan;
+  date: string;
+  today: string;
+}
+
+export function DayView({ plan, date, today }: DayViewProps) {
   const day = findDay(plan, date);
   const heading = useFocusHeading(
     day ? `${day.title} · ${APP_NAME}` : `Deň mimo plánu · ${APP_NAME}`,
@@ -33,6 +39,7 @@ export function DayView({ plan, date }: { plan: TrainingPlan; date: string }) {
         </h1>
         <div className="day__meta">
           <DayTypeBadge type={day.type} />
+          {day.date === today && <span className="pill pill--today">Dnes</span>}
           {day.estimatedMinutes > 0 && (
             <span className="pill pill--time">Odhad: ≈ {minutesLabel(day.estimatedMinutes)}</span>
           )}

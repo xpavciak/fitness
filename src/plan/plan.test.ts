@@ -8,6 +8,7 @@ import {
   findDay,
   generatePlan,
   getExercise,
+  linkedExerciseIdsOfDay,
   listExercises,
   requireExercise,
   totalSets,
@@ -209,16 +210,41 @@ describe('progression and deload', () => {
     expect(sum(gymSets(3))).toBeGreaterThan(sum(gymSets(2)));
   });
 
-  it('cuts ~40 % of sets in the deload week and raises RIR to 4', () => {
-    const ratio = sum(gymSets(4)) / sum(gymSets(3));
-    expect(ratio).toBeGreaterThanOrEqual(0.5);
-    expect(ratio).toBeLessThanOrEqual(0.7);
+  it('cuts ~45 % of sets in the deload week (as the focus text says) and raises RIR to 4', () => {
+    const removed = 1 - sum(gymSets(4)) / sum(gymSets(3));
+    expect(removed).toBeGreaterThanOrEqual(0.4);
+    expect(removed).toBeLessThanOrEqual(0.5);
+    expect(plan.weeks[3]?.focus).toContain(`~${Math.round(removed * 20) * 5} %`);
     const rirs = plan.days
       .filter((d) => d.week === 4)
       .flatMap((d) => d.sections.flatMap((s) => s.items))
       .flatMap((i) => (i.kind === 'strength' ? [i.rir] : []));
     expect(new Set(rirs)).toEqual(new Set(['4']));
     expect(plan.weeks[3]?.name).toBe('Odľahčenie');
+  });
+
+  it('gives heavy squat and bench sets 180 s rest in the peak week', () => {
+    const restOf = (week: number, id: string) =>
+      plan.days
+        .filter((d) => d.week === week)
+        .flatMap((d) => d.sections.flatMap((s) => s.items))
+        .find((i) => i.kind === 'strength' && i.exerciseId === id);
+    for (const id of ['back-squat', 'bench-press']) {
+      expect(restOf(3, id)).toMatchObject({ restSeconds: 180, reps: '4–6' });
+      expect(restOf(2, id)).toMatchObject({ restSeconds: 150 });
+    }
+  });
+
+  it('marks holds and carries so the UI shows time/distance instead of tempo', () => {
+    const items = plan.days.flatMap((d) => d.sections.flatMap((s) => s.items));
+    expect(items.find((i) => i.exerciseId === 'farmers-carry')).toMatchObject({
+      measure: 'distance',
+      reps: '30 m',
+    });
+    expect(items.find((i) => i.exerciseId === 'plank')).toMatchObject({ measure: 'hold' });
+    expect(items.find((i) => i.exerciseId === 'back-squat' && i.kind === 'strength')).toMatchObject(
+      { measure: 'reps' },
+    );
   });
 
   it('uses RIR 3 / 2 / 1–2 in weeks 1–3', () => {
@@ -246,6 +272,22 @@ describe('exercise library', () => {
       expect(ex.mistakes.length, ex.id).toBeGreaterThan(0);
       expect(ex.primaryMuscles.length, ex.id).toBeGreaterThan(0);
       expect(ex.easier && ex.harder && ex.equipment && ex.animation, ex.id).toBeTruthy();
+    }
+  });
+
+  it('heavy barbell lifts include safety setup and bail-out guidance', () => {
+    for (const id of ['back-squat', 'bench-press']) {
+      const safety = requireExercise(id).safety ?? [];
+      expect(safety.length, id).toBeGreaterThan(0);
+      expect(safety.join(' '), id).toMatch(/bezpečnostn/);
+    }
+  });
+
+  it('references the bike as the cardio alternative', () => {
+    const cardio = plan.days.filter((d) => d.type === 'cardio');
+    for (const day of cardio) {
+      expect(linkedExerciseIdsOfDay(day)).toContain('bike-intervals');
+      expect(exerciseIdsOfDay(day)).not.toContain('bike-intervals');
     }
   });
 

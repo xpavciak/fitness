@@ -1,6 +1,5 @@
-import { Component, Suspense, lazy, useState, type ReactNode } from 'react';
+import { Component, Suspense, lazy, type ReactNode } from 'react';
 import type { AnimationId } from '../plan';
-import { isWebGLAvailable } from '../hologram/webgl';
 
 // three.js and the scene are only downloaded when an exercise is opened.
 const HologramStage = lazy(() => import('../hologram/HologramStage'));
@@ -9,11 +8,16 @@ interface HologramProps {
   animation: AnimationId;
   playing: boolean;
   reducedMotion: boolean;
+  turns: number;
   exerciseName: string;
+  /** Result of WebGL detection (owned by the parent so it can hide controls). */
+  webgl: boolean;
+  /** Called when the 3D scene fails at runtime (e.g. context creation error). */
+  onUnavailable: () => void;
 }
 
 class HologramErrorBoundary extends Component<
-  { fallback: ReactNode; children: ReactNode },
+  { fallback: ReactNode; onError: () => void; children: ReactNode },
   { failed: boolean }
 > {
   state = { failed: false };
@@ -24,6 +28,7 @@ class HologramErrorBoundary extends Component<
 
   componentDidCatch(error: unknown) {
     console.error('Hologram failed to render', error);
+    this.props.onError();
   }
 
   render() {
@@ -40,8 +45,7 @@ function Fallback({ children }: { children: ReactNode }) {
   );
 }
 
-export function Hologram({ animation, playing, reducedMotion, exerciseName }: HologramProps) {
-  const [webgl] = useState(isWebGLAvailable);
+export function Hologram({ webgl, onUnavailable, exerciseName, ...stage }: HologramProps) {
   const noWebgl = (
     <Fallback>
       3D ukážka nie je dostupná, pretože prehliadač nepodporuje WebGL. Riaď sa popisom techniky.
@@ -49,13 +53,11 @@ export function Hologram({ animation, playing, reducedMotion, exerciseName }: Ho
   );
   if (!webgl) return noWebgl;
   return (
-    <HologramErrorBoundary fallback={noWebgl}>
+    <HologramErrorBoundary fallback={noWebgl} onError={onUnavailable}>
       <Suspense fallback={<Fallback>Načítavam hologram…</Fallback>}>
         <HologramStage
-          animation={animation}
-          playing={playing}
-          reducedMotion={reducedMotion}
-          label={`3D hologram predvádza cvik ${exerciseName}. Ťahaním myšou alebo prstom ho otočíš.`}
+          {...stage}
+          label={`3D hologram predvádza cvik ${exerciseName}. Otáčať ho môžeš ťahaním alebo tlačidlami pod ním.`}
         />
       </Suspense>
     </HologramErrorBoundary>
