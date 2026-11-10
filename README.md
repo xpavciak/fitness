@@ -46,12 +46,20 @@ The build uses a relative base and hash routing (`#/den/2026-11-16`,
 starting with `#/` are routes; other hashes (the "Preskočiť na obsah" skip link) are ignored by
 the router. A top-level error boundary shows a message instead of a blank page.
 
-## Deploy
+## Deploy (Cloudflare Pages)
 
-Every push to `main` builds the site and publishes it to GitHub Pages
-(`.github/workflows/deploy.yml`) at <https://xpavciak.github.io/fitness/>.
-One-time setup: in the repository settings, set **Pages → Build and deployment → Source** to
-**GitHub Actions**. Hash routing and the relative Vite `base` make deep links work on Pages.
+The site is a static build, deployed with Cloudflare Pages' Git integration (no secrets in this repo).
+One-time setup in the Cloudflare dashboard:
+
+1. **Workers & Pages → Create → Pages → Connect to Git**, pick `xpavciak/fitness`.
+2. Production branch `main`, framework preset **None**, build command `pnpm build`,
+   output directory `dist`. Node comes from `.node-version`, pnpm from `packageManager`.
+3. After the first deploy: **Custom domains → Set up a custom domain** and enter the
+   (sub)domain; Cloudflare adds the DNS record when the zone is on the same account.
+
+Every push to `main` then deploys to production, and every other branch gets a preview URL.
+`public/_headers` sets security headers (CSP etc.) and long caching for hashed assets. Hash
+routing and the relative Vite `base` mean no SPA redirect rules are needed.
 
 ## Structure
 
