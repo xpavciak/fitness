@@ -309,7 +309,7 @@ const splitBottom = pose(splitArms, {
   rFootP: 155,
 });
 
-export const CLIPS: Record<AnimationId, Clip> = {
+const BASE_CLIPS = {
   'squat-hold': {
     duration: 5,
     keyframes: [
@@ -540,6 +540,32 @@ export const CLIPS: Record<AnimationId, Clip> = {
     ],
     grounded: true,
     pinFeetZ: null,
+    props: [],
+  },
+} satisfies Record<string, Clip>;
+
+/** Same movement with different equipment (used by swap alternatives). */
+function withProps(clip: Clip, props: Clip['props']): Clip {
+  return { ...clip, props };
+}
+
+export const CLIPS: Record<AnimationId, Clip> = {
+  ...BASE_CLIPS,
+  'squat-dumbbells': withProps(BASE_CLIPS.squat, ['dumbbells']),
+  'hinge-dumbbells': withProps(BASE_CLIPS.hinge, ['dumbbells']),
+  'bench-press-dumbbells': withProps(BASE_CLIPS['bench-press'], ['bench', 'dumbbells']),
+  'overhead-press-dumbbells': withProps(BASE_CLIPS['overhead-press'], ['dumbbells']),
+  'row-dumbbells': withProps(BASE_CLIPS.row, ['dumbbells']),
+  'carry-one': withProps(BASE_CLIPS.carry, ['dumbbell-right']),
+  // Static push-up top position with a slight breathing motion.
+  'high-plank': {
+    duration: 4,
+    keyframes: [
+      { t: 0, pose: pushTop },
+      { t: 0.5, pose: { ...pushTop, spineP: -3, chestP: 2 } },
+    ],
+    grounded: true,
+    pinFeetZ: -0.8,
     props: [],
   },
 };

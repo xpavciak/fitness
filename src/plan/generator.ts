@@ -1,6 +1,7 @@
 import { addDays, isValidIsoDate, nextMondayOnOrAfter, weekdayIndex } from './dates';
 import { estimateMinutes, secondsPerRep } from './duration';
 import { requireExercise } from './exercises';
+import { isValidSwap, tempoCue, type ExerciseSwaps } from './swaps';
 import {
   GYM_SESSIONS,
   INTERVALS,
@@ -73,15 +74,21 @@ const MEASURES: Record<RepScheme, StrengthItem['measure']> = {
   carry: 'distance',
 };
 
-export function buildStrengthItem(template: StrengthTemplate, week: WeekNumber): StrengthItem {
+export function buildStrengthItem(
+  template: StrengthTemplate,
+  week: WeekNumber,
+  swaps: ExerciseSwaps = {},
+): StrengthItem {
   const rep = REP_SCHEMES[template.scheme][week - 1];
   if (!rep) throw new Error(`Missing rep scheme for week ${week}`);
   const workSecondsPerSet = TIMED_SCHEMES.has(template.scheme)
     ? rep.value
     : rep.value * secondsPerRep(template.tempo);
-  return {
+  const planned = exerciseIdForWeek(template, week);
+  const replacement = swapFor(planned, swaps);
+  const item: StrengthItem = {
     kind: 'strength',
-    exerciseId: exerciseIdForWeek(template, week),
+    exerciseId: replacement ?? planned,
     sets: setsForWeek(template, week),
     reps: rep.label,
     measure: MEASURES[template.scheme],
@@ -92,13 +99,29 @@ export function buildStrengthItem(template: StrengthTemplate, week: WeekNumber):
     tempo: template.tempo,
     cue: template.cue,
   };
+  if (replacement) {
+    // The original cue may name the replaced exercise; describe the tempo instead.
+    item.replaces = planned;
+    item.cue = tempoCue(item);
+  }
+  return item;
 }
 
-function gymDay(session: GymSessionKey, week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
+function swapFor(exerciseId: string, swaps: ExerciseSwaps): string | undefined {
+  const replacement = Object.hasOwn(swaps, exerciseId) ? swaps[exerciseId] : undefined;
+  return replacement && isValidSwap(exerciseId, replacement) ? replacement : undefined;
+}
+
+function gymDay(
+  session: GymSessionKey,
+  week: WeekNumber,
+  swaps: ExerciseSwaps,
+): Omit<DayPlan, 'date' | 'weekday'> {
   const template = GYM_SESSIONS[session];
   const first = template.exercises[0];
   if (!first) throw new Error(`Session ${session} has no exercises`);
-  const firstId = exerciseIdForWeek(first, week);
+  const firstPlanned = exerciseIdForWeek(first, week);
+  const firstId = swapFor(firstPlanned, swaps) ?? firstPlanned;
   const firstName = requireExercise(firstId).name;
 
   const warmup: WorkoutSection = {
@@ -132,7 +155,7 @@ function gymDay(session: GymSessionKey, week: WeekNumber): Omit<DayPlan, 'date' 
   const main: WorkoutSection = {
     kind: 'main',
     title: 'Hlavná časť',
-    items: template.exercises.map((t) => buildStrengthItem(t, week)),
+    items: template.exercises.map((t) => buildStrengthItem(t, week, swaps)),
   };
 
   const sections: WorkoutSection[] = [warmup, main];
@@ -422,10 +445,14 @@ function fullRestDay(week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
   };
 }
 
-function buildDay(slot: DaySlot, week: WeekNumber): Omit<DayPlan, 'date' | 'weekday'> {
+function buildDay(
+  slot: DaySlot,
+  week: WeekNumber,
+  swaps: ExerciseSwaps,
+): Omit<DayPlan, 'date' | 'weekday'> {
   switch (slot.type) {
     case 'gym':
-      return gymDay(slot.session, week);
+      return gymDay(slot.session, week, swaps);
     case 'cardio':
       return slot.variant === 'zone2' ? zone2Day(week) : intervalDay(week);
     case 'rest':
@@ -435,9 +462,9 @@ function buildDay(slot: DaySlot, week: WeekNumber): Omit<DayPlan, 'date' | 'week
 
 /**
  * Generates the 4-week plan. Pure and deterministic: the same start date
- * always yields the same plan.
+ * (and the same exercise swaps) always yields the same plan.
  */
-export function generatePlan(startDate: string): TrainingPlan {
+export function generatePlan(startDate: string, swaps: ExerciseSwaps = {}): TrainingPlan {
   if (!isValidIsoDate(startDate)) {
     throw new Error(`Invalid start date: ${startDate}`);
   }
@@ -449,7 +476,7 @@ export function generatePlan(startDate: string): TrainingPlan {
     const week = (w + 1) as WeekNumber;
     WEEK_LAYOUT.forEach((slot, weekday) => {
       const date = addDays(startDate, w * DAYS_PER_WEEK + weekday);
-      days.push({ date, weekday, ...buildDay(slot, week) });
+      days.push({ date, weekday, ...buildDay(slot, week, swaps) });
     });
   }
   return {

@@ -3,6 +3,14 @@
 A static website that shows a generated, coach-style **one-month training plan** with concrete
 tasks for every day. The UI is in Slovak.
 
+- The home screen (`#/`) shows only **today's** workout (or a note when the plan has not
+  started yet / has ended, with the start choice). "Celý mesiac" in the top bar and above the
+  workout opens the month overview (`#/mesiac`).
+- **Replacing exercises:** every main exercise on a gym day has "Zmazať a nahradiť". It offers
+  curated alternatives for the same muscles and the same kind of prescription (reps, hold or
+  carried distance), leaving out exercises already used in that session. The swap applies to
+  every day of the plan, keeps sets/reps/rest, is stored in `localStorage`
+  (`treningovy-plan:vymeny`) and can be undone ("Vrátiť pôvodný").
 - 4 weeks starting on a Monday. By default the next Monday on/after today; on the overview the
   user can choose "Začať tento týždeň" (this week's Monday, earlier days are shown as past) or
   "Začať budúci pondelok". The choice is stored in `localStorage`; after a plan ends it stays
@@ -41,7 +49,7 @@ pnpm build        # static build into dist/
 pnpm preview      # serve dist/ on http://localhost:4173
 ```
 
-The build uses a relative base and hash routing (`#/den/2026-11-16`,
+The build uses a relative base and hash routing (`#/` today, `#/mesiac`, `#/den/2026-11-16`,
 `#/den/2026-11-16/cvik/back-squat`), so `dist/` can be hosted on any static host. Only hashes
 starting with `#/` are routes; other hashes (the "Preskočiť na obsah" skip link) are ignored by
 the router. A top-level error boundary shows a message instead of a blank page.
@@ -58,6 +66,7 @@ src/
     duration.ts      session duration estimate from sets × (reps × tempo + setup + rest)
     dates.ts         UTC-safe ISO date helpers, Slovak date formatting
     schedule.ts      plan start options (this/next Monday), status, start resolution
+    swaps.ts         curated exercise alternatives and swap validation
   hologram/          3D figure (three.js via @react-three/fiber, lazy-loaded)
     orbitCamera.ts   three's OrbitControls configured for a scrollable page + button rotation
     webgl.ts         cached WebGL detection (probe context is released)
@@ -67,7 +76,8 @@ src/
     materials.ts     holographic shaders (fresnel glow, scanlines, flicker, base disc, beam)
     controller.ts    owns three.js objects and advances the animation each frame
     HologramStage.tsx  R3F canvas with orbit controls
-  components/        Overview (start control), DayView, ExerciseView, Hologram wrapper
+  components/        TodayView (home), Overview (start control), DayView, SwapControl,
+                     ExerciseView, Hologram wrapper
                      (WebGL fallback), AppErrorBoundary, ...
   hooks/             hash routing, plan persistence, live "today", media queries
   routing.ts         hash route parsing/building

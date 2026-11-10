@@ -4,7 +4,7 @@ import { isRouteHash, parseHash, type Route } from '../routing';
 export function useHashRoute(): Route {
   const [route, setRoute] = useState<Route>(() => {
     const hash = window.location.hash;
-    return isRouteHash(hash) ? parseHash(hash) : { name: 'overview' };
+    return isRouteHash(hash) ? parseHash(hash) : { name: 'today' };
   });
   useEffect(() => {
     const onChange = () => {

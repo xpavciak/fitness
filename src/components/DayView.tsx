@@ -4,6 +4,7 @@ import { DayTypeBadge } from './DayTypeBadge';
 import { APP_NAME, minutesLabel } from './labels';
 import { NotInPlan } from './NotFound';
 import { SafetyNote } from './SafetyNote';
+import type { SwapHandler } from './SwapControl';
 import { WorkoutItemRow } from './WorkoutItemRow';
 import { useFocusHeading } from './useFocusHeading';
 
@@ -11,12 +12,19 @@ interface DayViewProps {
   plan: TrainingPlan;
   date: string;
   today: string;
+  onSwap?: SwapHandler;
+  /** Shown as the home screen ("Dnes") instead of a day opened from the month. */
+  isHome?: boolean;
 }
 
-export function DayView({ plan, date, today }: DayViewProps) {
+export function DayView({ plan, date, today, onSwap, isHome = false }: DayViewProps) {
   const day = findDay(plan, date);
   const heading = useFocusHeading(
-    day ? `${day.title} · ${APP_NAME}` : `Deň mimo plánu · ${APP_NAME}`,
+    isHome
+      ? `Dnes · ${APP_NAME}`
+      : day
+        ? `${day.title} · ${APP_NAME}`
+        : `Deň mimo plánu · ${APP_NAME}`,
   );
   if (!day) return <NotInPlan headingRef={heading} />;
 
@@ -27,10 +35,17 @@ export function DayView({ plan, date, today }: DayViewProps) {
   return (
     <article className="day" aria-labelledby="day-title">
       <nav className="crumbs" aria-label="Navigácia">
-        <a href={hrefs.overview()}>← Prehľad mesiaca</a>
+        {isHome ? (
+          <a className="button button--month" href={hrefs.overview()}>
+            Celý mesiac
+          </a>
+        ) : (
+          <a href={hrefs.overview()}>← Prehľad mesiaca</a>
+        )}
       </nav>
       <header className="day__header">
         <p className="eyebrow">
+          {isHome ? 'Dnes · ' : ''}
           {formatLongDateSk(day.date)} · Týždeň {day.week}
           {week ? ` – ${week.name}` : ''}
         </p>
@@ -60,7 +75,16 @@ export function DayView({ plan, date, today }: DayViewProps) {
               </h2>
               <ol className="items">
                 {section.items.map((item, i) => (
-                  <WorkoutItemRow key={i} item={item} date={day.date} />
+                  <WorkoutItemRow
+                    key={i}
+                    item={item}
+                    date={day.date}
+                    swap={
+                      onSwap && section.kind === 'main'
+                        ? { plan, session: day.gymSession, onSwap }
+                        : undefined
+                    }
+                  />
                 ))}
               </ol>
             </li>
