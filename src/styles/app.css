@@ -121,13 +121,6 @@ h3 {
     inset 0 0 8px rgba(56, 232, 255, 0.6);
 }
 
-.topbar__tag {
-  color: var(--muted);
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
 .page {
   width: min(1240px, 100%);
   margin: 0 auto;
@@ -951,12 +944,6 @@ a.item__name:hover {
   }
 }
 
-@media (max-width: 420px) {
-  .topbar__tag {
-    display: none;
-  }
-}
-
 /* ---------------------------------------------------------------- fix round */
 /* OrbitControls sets touch-action: none inline on the canvas; allow vertical page scroll. */
 .hologram-canvas,
@@ -1077,4 +1064,141 @@ main:focus {
   border-color: var(--danger);
   color: var(--danger);
   background: rgba(255, 120, 100, 0.12);
+}
+
+/* ---------------------------------------------------------------- today + swaps */
+.topnav {
+  display: flex;
+  gap: 4px;
+}
+
+.topnav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.92rem;
+  text-decoration: none;
+}
+
+.topnav a:hover {
+  color: var(--text);
+}
+
+.topnav a[aria-current='page'] {
+  background: rgba(56, 232, 255, 0.12);
+  color: var(--accent);
+}
+
+.brand,
+.topnav a {
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  /* Keep the name for screen readers; the glowing mark stays as the home link. */
+  .brand__text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .topnav a {
+    padding: 6px 12px;
+  }
+}
+
+.crumbs .button--month {
+  padding: 8px 18px;
+}
+
+.today-empty .start-control {
+  margin-top: 24px;
+}
+
+.swap {
+  margin-top: 10px;
+}
+
+.swap__toggle {
+  min-height: 36px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.swap__toggle:hover,
+.swap__toggle[aria-expanded='true'] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.swap__panel {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.swap__hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.swap__choices {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.swap__choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.swap__choice:hover {
+  border-color: var(--accent);
+}
+
+.swap__name {
+  font-weight: 700;
+}
+
+.swap__equipment {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.swap__choice--restore {
+  border-style: dashed;
+}
+
+.swap__info strong {
+  color: var(--text);
 }

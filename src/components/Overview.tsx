@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   WEEKDAY_SHORT,
-  daysBetween,
   formatDateSk,
   formatLongDateSk,
   planStatus,
@@ -13,26 +12,13 @@ import { hrefs } from '../routing';
 import { DayTypeBadge } from './DayTypeBadge';
 import { APP_NAME, DAY_TYPE_DESCRIPTIONS, DAY_TYPE_LABELS, minutesLabel } from './labels';
 import { SafetyNote } from './SafetyNote';
+import { startMessage } from './startMessage';
 import { useFocusHeading } from './useFocusHeading';
 
-interface OverviewProps {
+export interface OverviewProps {
   plan: TrainingPlan;
   today: string;
   onStartChange: (start: string) => void;
-}
-
-/** Slovak plural for days: 2–4 "dni", 5+ "dní". */
-function daysWord(n: number): string {
-  return n >= 2 && n <= 4 ? 'dni' : 'dní';
-}
-
-function startMessage(plan: TrainingPlan, today: string): string {
-  const until = daysBetween(today, plan.startDate);
-  if (until > 1) return `Plán začína o ${until} ${daysWord(until)}.`;
-  if (until === 1) return 'Plán začína zajtra.';
-  if (until === 0) return 'Plán začína dnes. Veľa šťastia!';
-  if (today > plan.endDate) return 'Plán skončil. Môžeš začať nový.';
-  return `Prebieha ${Math.floor(-until / 7) + 1}. týždeň plánu.`;
 }
 
 function DayCard({ day, today }: { day: DayPlan; today: string }) {
@@ -70,7 +56,7 @@ function DayCard({ day, today }: { day: DayPlan; today: string }) {
   );
 }
 
-function StartControl({ plan, today, onStartChange }: OverviewProps) {
+export function StartControl({ plan, today, onStartChange }: OverviewProps) {
   const options = startOptions(today);
   const status = planStatus(plan.startDate, today);
   const ended = status === 'ended';
@@ -192,7 +178,8 @@ export function Overview({ plan, today, onStartChange }: OverviewProps) {
         </h1>
         <p className="hero__lead">
           3× týždenne posilňovňa (nohy, tlak, ťah), 2× beh a zvyšok regenerácia. Každý tréning
-          približne hodinu. Klikni na deň a uvidíš presný program.
+          približne hodinu. Klikni na deň a uvidíš presný program.{' '}
+          <a href={hrefs.today()}>Späť na dnešný tréning</a>
         </p>
         <p className="hero__meta">
           <span>

@@ -4,6 +4,7 @@ import { AppErrorBoundary } from './components/ErrorBoundary';
 import { ExerciseView } from './components/ExerciseView';
 import { NotInPlan } from './components/NotFound';
 import { Overview } from './components/Overview';
+import { TodayView } from './components/TodayView';
 import { APP_NAME } from './components/labels';
 import { useFocusHeading } from './components/useFocusHeading';
 import { useHashRoute } from './hooks/useHashRoute';
@@ -20,6 +21,8 @@ function PageNotFound() {
 
 function routeKey(route: Route): string {
   switch (route.name) {
+    case 'today':
+      return 'today';
     case 'overview':
       return 'overview';
     case 'day':
@@ -40,7 +43,7 @@ export function App({ today: todayOverride }: AppProps) {
   const liveToday = useToday();
   const today = todayOverride ?? liveToday;
   const route = useHashRoute();
-  const { plan, setStart } = usePlan(today);
+  const { plan, setStart, swapExercise } = usePlan(today);
   const mainRef = useRef<HTMLElement>(null);
 
   // Hash routing would treat "#obsah" as a route, so move focus manually.
@@ -51,11 +54,14 @@ export function App({ today: todayOverride }: AppProps) {
 
   let page;
   switch (route.name) {
+    case 'today':
+      page = <TodayView plan={plan} today={today} onStartChange={setStart} onSwap={swapExercise} />;
+      break;
     case 'overview':
       page = <Overview plan={plan} today={today} onStartChange={setStart} />;
       break;
     case 'day':
-      page = <DayView plan={plan} date={route.date} today={today} />;
+      page = <DayView plan={plan} date={route.date} today={today} onSwap={swapExercise} />;
       break;
     case 'exercise':
       page = <ExerciseView plan={plan} date={route.date} exerciseId={route.exerciseId} />;
@@ -71,11 +77,18 @@ export function App({ today: todayOverride }: AppProps) {
         Preskočiť na obsah
       </a>
       <header className="topbar">
-        <a className="brand" href={hrefs.overview()}>
+        <a className="brand" href={hrefs.today()}>
           <span className="brand__mark" aria-hidden="true" />
-          {APP_NAME}
+          <span className="brand__text">{APP_NAME}</span>
         </a>
-        <span className="topbar__tag">nohy · tlak · ťah · beh</span>
+        <nav className="topnav" aria-label="Hlavná navigácia">
+          <a href={hrefs.today()} aria-current={route.name === 'today' ? 'page' : undefined}>
+            Dnes
+          </a>
+          <a href={hrefs.overview()} aria-current={route.name === 'overview' ? 'page' : undefined}>
+            Celý mesiac
+          </a>
+        </nav>
       </header>
       <main id="obsah" className="page" ref={mainRef} tabIndex={-1}>
         {/* Keyed by route so an error on one page is cleared by navigating away. */}

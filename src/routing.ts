@@ -2,11 +2,13 @@ import { isValidIsoDate } from './plan/dates';
 
 /**
  * Hash-based routes so the static build works on any host without rewrites:
- *   #/                         month overview
+ *   #/                         today's workout (home screen)
+ *   #/mesiac                   month overview
  *   #/den/2026-11-16           day detail
  *   #/den/2026-11-16/cvik/id   exercise detail within a day
  */
 export type Route =
+  | { name: 'today' }
   | { name: 'overview' }
   | { name: 'day'; date: string }
   | { name: 'exercise'; date: string; exerciseId: string }
@@ -24,7 +26,8 @@ export function isRouteHash(hash: string): boolean {
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#/, '').replace(/\/+$/, '') || '/';
-  if (path === '/' || path === '') return { name: 'overview' };
+  if (path === '/' || path === '') return { name: 'today' };
+  if (path === '/mesiac') return { name: 'overview' };
   const parts = path.split('/').filter(Boolean).map(safeDecode);
   if (parts[0] === 'den' && parts[1] && isValidIsoDate(parts[1])) {
     if (parts.length === 2) return { name: 'day', date: parts[1] };
@@ -45,7 +48,8 @@ function safeDecode(segment: string): string {
 }
 
 export const hrefs = {
-  overview: () => '#/',
+  today: () => '#/',
+  overview: () => '#/mesiac',
   day: (date: string) => `#/den/${date}`,
   exercise: (date: string, exerciseId: string) => `#/den/${date}/cvik/${exerciseId}`,
 };

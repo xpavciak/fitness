@@ -17,7 +17,7 @@ describe('AppErrorBoundary', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Niečo sa pokazilo');
     expect(screen.getByRole('link', { name: 'Späť na prehľad mesiaca' })).toHaveAttribute(
       'href',
-      '#/',
+      '#/mesiac',
     );
     expect(error).toHaveBeenCalled();
     error.mockRestore();

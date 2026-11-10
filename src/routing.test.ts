@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { hrefs, parseHash } from './routing';
 
 describe('parseHash', () => {
-  it('parses overview, day and exercise routes', () => {
-    expect(parseHash('')).toEqual({ name: 'overview' });
-    expect(parseHash('#/')).toEqual({ name: 'overview' });
+  it('parses today, month overview, day and exercise routes', () => {
+    expect(parseHash('')).toEqual({ name: 'today' });
+    expect(parseHash('#/')).toEqual({ name: 'today' });
+    expect(parseHash('#/mesiac')).toEqual({ name: 'overview' });
+    expect(parseHash('#/mesiac/')).toEqual({ name: 'overview' });
     expect(parseHash('#/den/2026-11-16')).toEqual({ name: 'day', date: '2026-11-16' });
     expect(parseHash('#/den/2026-11-16/')).toEqual({ name: 'day', date: '2026-11-16' });
     expect(parseHash('#/den/2026-11-16/cvik/back-squat')).toEqual({
@@ -25,5 +27,6 @@ describe('parseHash', () => {
     expect(parseHash(hrefs.exercise('2026-11-16', 'plank'))).toMatchObject({ name: 'exercise' });
     expect(parseHash(hrefs.day('2026-11-16'))).toMatchObject({ name: 'day' });
     expect(parseHash(hrefs.overview())).toEqual({ name: 'overview' });
+    expect(parseHash(hrefs.today())).toEqual({ name: 'today' });
   });
 });

@@ -6,3 +6,4 @@ export * from './exercises';
 export * from './templates';
 export * from './generator';
 export * from './schedule';
+export * from './swaps';

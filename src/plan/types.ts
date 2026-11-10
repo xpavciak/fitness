@@ -43,7 +43,14 @@ export type AnimationId =
   | 'run'
   | 'bike'
   | 'mobility'
-  | 'cat-cow';
+  | 'cat-cow'
+  | 'squat-dumbbells'
+  | 'hinge-dumbbells'
+  | 'bench-press-dumbbells'
+  | 'overhead-press-dumbbells'
+  | 'row-dumbbells'
+  | 'high-plank'
+  | 'carry-one';
 
 export interface Exercise {
   id: string;
@@ -84,6 +91,8 @@ export interface StrengthItem {
   /** Tempo, eccentric-pause-concentric in seconds, e.g. "3-1-1". */
   tempo: string;
   cue: string;
+  /** Set when the user replaced the planned exercise: the original exercise id. */
+  replaces?: string;
 }
 
 /** A block of time (warm-up drill, cardio segment, mobility drill). */

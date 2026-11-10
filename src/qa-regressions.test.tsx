@@ -17,7 +17,7 @@ function go(hash: string) {
 
 beforeEach(() => {
   window.localStorage.clear();
-  window.location.hash = '#/';
+  window.location.hash = '#/mesiac';
 });
 
 describe('QA: exercise lookup ignores Object.prototype keys', () => {

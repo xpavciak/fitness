@@ -1,9 +1,31 @@
-import { getExercise, type StrengthItem, type TimedItem, type WorkoutItem } from '../plan';
+import {
+  getExercise,
+  type StrengthItem,
+  type TimedItem,
+  type TrainingPlan,
+  type WorkoutItem,
+} from '../plan';
 import { hrefs } from '../routing';
 import { minutesLabel } from './labels';
 import { StrengthStats } from './StrengthStats';
+import { SwapControl, type SwapHandler } from './SwapControl';
 
-function StrengthRow({ item, date }: { item: StrengthItem; date: string }) {
+/** Lets the user replace planned exercises (gym days). */
+export interface SwapContext {
+  plan: TrainingPlan;
+  session: string | undefined;
+  onSwap: SwapHandler;
+}
+
+function StrengthRow({
+  item,
+  date,
+  swap,
+}: {
+  item: StrengthItem;
+  date: string;
+  swap?: SwapContext;
+}) {
   const exercise = getExercise(item.exerciseId);
   const name = exercise?.name ?? item.exerciseId;
   return (
@@ -30,6 +52,7 @@ function StrengthRow({ item, date }: { item: StrengthItem; date: string }) {
       {exercise?.unilateral && (
         <p className="item__note">Jednostranný cvik – séria = obe strany.</p>
       )}
+      {swap && <SwapControl item={item} {...swap} />}
     </li>
   );
 }
@@ -61,9 +84,17 @@ function TimedRow({ item, date }: { item: TimedItem; date: string }) {
   );
 }
 
-export function WorkoutItemRow({ item, date }: { item: WorkoutItem; date: string }) {
+export function WorkoutItemRow({
+  item,
+  date,
+  swap,
+}: {
+  item: WorkoutItem;
+  date: string;
+  swap?: SwapContext;
+}) {
   return item.kind === 'strength' ? (
-    <StrengthRow item={item} date={date} />
+    <StrengthRow item={item} date={date} swap={swap} />
   ) : (
     <TimedRow item={item} date={date} />
   );

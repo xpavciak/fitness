@@ -13,7 +13,7 @@ function go(hash: string) {
 
 beforeEach(() => {
   window.localStorage.clear();
-  window.location.hash = '#/';
+  window.location.hash = '#/mesiac';
 });
 
 afterEach(() => {
@@ -310,7 +310,7 @@ describe('navigation', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Cvik sa nenašiel' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'Späť na prehľad mesiaca' })).toHaveAttribute(
       'href',
-      '#/',
+      '#/mesiac',
     );
   });
 });
