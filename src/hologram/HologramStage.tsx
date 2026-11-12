@@ -1,13 +1,10 @@
-import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
-import { useEffect, useRef, useState } from 'react';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { use, useEffect, useRef, useState } from 'react';
+import type { Object3D } from 'three';
 import type { AnimationId } from '../plan/types';
 import { HologramController } from './controller';
-import { HUMAN_MODEL_HASH } from './humanSkeleton';
+import { loadHumanModel } from './modelLoader';
 import { OrbitCamera } from './orbitCamera';
-
-/** Self-hosted CC0 human model (see docs/ASSETS.md); relative to the page. */
-export const MODEL_URL = `${import.meta.env.BASE_URL}models/human.glb?v=${HUMAN_MODEL_HASH}`;
 
 /** Degrees per press of the rotate buttons. */
 export const ROTATE_STEP_DEGREES = 30;
@@ -54,10 +51,9 @@ function HologramScene({
   animation,
   playing,
   reducedMotion,
-}: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'>) {
-  // Suspends (outer <Suspense> shows the loading text) until the model is parsed.
-  const gltf = useLoader(GLTFLoader, MODEL_URL);
-  const [controller] = useState(() => new HologramController(animation, gltf.scene));
+  model,
+}: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'> & { model: Object3D }) {
+  const [controller] = useState(() => new HologramController(animation, model));
   const invalidate = useThree((s) => s.invalidate);
 
   useEffect(() => controller.setAnimation(animation), [controller, animation]);
@@ -93,6 +89,10 @@ function HologramScene({
 
 /** 3D hologram canvas. Default export so it can be lazy-loaded. */
 export default function HologramStage({ label, turns, ...sceneProps }: HologramStageProps) {
+  // Suspends (outer <Suspense> shows the loading text) until the model is
+  // parsed. Loading outside <Canvas> keeps failures in this React tree, where
+  // the error boundary offers a retry.
+  const model = use(loadHumanModel());
   return (
     <Canvas
       className="hologram-canvas"
@@ -107,7 +107,7 @@ export default function HologramStage({ label, turns, ...sceneProps }: HologramS
       role="img"
       aria-label={label}
     >
-      <HologramScene {...sceneProps} />
+      <HologramScene {...sceneProps} model={model} />
       <CameraControls turns={turns} />
     </Canvas>
   );

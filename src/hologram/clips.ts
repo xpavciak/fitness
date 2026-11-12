@@ -26,8 +26,8 @@ import {
   STEP,
   TREADMILL,
 } from './layout';
-import { ease, loopSpline, mix, track, wrapTime, type Ease } from './motion';
-import { ARM_REACH, LIMB, boneIndex, landmark, type Side } from './skeleton';
+import { ease, loopSpline, mix, smoothstep, track, wrapTime, type Ease } from './motion';
+import { ARM_REACH, ARM_REACH_HEEL, LIMB, boneIndex, landmark, type Side } from './skeleton';
 import {
   worldPoint,
   type ArmTarget,
@@ -292,6 +292,7 @@ function row(kind: 'barbell' | 'dumbbells'): Clip {
 const STERNUM = landmark('sternum');
 const UPPER_BACK = landmark('upperBack');
 const GLUTES = landmark('glutes');
+const HEAD_BACK = landmark('headBack');
 
 /**
  * Lowers/tilts the body until the glutes and upper back rest on a plane
@@ -321,6 +322,27 @@ function restOnPlane(
   return targets;
 }
 
+/**
+ * Pitches the head (chin tuck / tilt back) until the back of the head rests on
+ * the pad plane instead of sinking into it or hovering above it.
+ */
+function restHead(solver: BodySolver, targets: BodyTargets, point: Vec, normal: Vec) {
+  const n = tmp2.set(...normal).normalize();
+  const nx = n.x;
+  const ny = n.y;
+  const nz = n.z;
+  const offset = nx * point[0] + ny * point[1] + nz * point[2];
+  const base = targets.head ?? {};
+  const height = (pitch: number) => {
+    targets.head = { ...base, pitch };
+    const p = worldPoint(solver.solve(targets), HEAD_BACK, tmp);
+    return p.x * nx + p.y * ny + p.z * nz - offset;
+  };
+  // The landmark sits ~1.5 cm above the lowest skin of the occiput.
+  const pitch = solveMonotonic(height, 0.017, -12, 28, 10);
+  targets.head = { ...base, pitch };
+}
+
 /** Flat barbell or dumbbell bench press, incline dumbbell press. */
 function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
   // 2.4 s lowering, light touch, explosive press, lockout.
@@ -344,7 +366,7 @@ function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
     : [0, FLAT_BENCH.top, 0];
   const padNormal: Vec = [0, Math.cos(rad), Math.sin(rad)];
   const hipsZ = incline ? -0.04 : -0.2;
-  const feetZ = incline ? 0.62 : 0.4;
+  const feetZ = incline ? 0.56 : 0.32;
   return {
     duration,
     props: barbell
@@ -354,9 +376,10 @@ function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
         : ['bench', 'dumbbells'],
     frame: (t, solver) => {
       const k = down(t);
+      // Feet flat, about hip-and-a-half wide, just in front of the knees.
       const legs: Record<Side, LegTarget> = both((s) => ({
-        foot: flatFoot(s, incline ? 0.24 : 0.3, feetZ, 22),
-        knee: [sx(s, 0.5), 0.8, 0.5],
+        foot: flatFoot(s, incline ? 0.21 : 0.23, feetZ, 14),
+        knee: [sx(s, 0.25), 0.8, 0.5],
       }));
       const targets: BodyTargets = {
         hips: { pos: [0, 0.6, hipsZ], pitch: -90 + angle },
@@ -374,7 +397,7 @@ function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
       const up = new Vector3(0, 1, 0);
       const gripX = barbell ? 0.29 : mix(0.15, 0.25, k);
       // Lockout: bar over the shoulders, arms nearly straight.
-      const topY = sh.y + Math.sqrt((ARM_REACH * 0.985) ** 2 - (gripX - 0.19) ** 2);
+      const topY = sh.y + Math.sqrt((ARM_REACH_HEEL * 0.985) ** 2 - (gripX - 0.19) ** 2);
       // Touch point: lower chest (dumbbells slightly higher, beside the chest).
       const chestTouch = sternum.clone().addScaledVector(up, barbell ? 0.03 : 0.06);
       if (incline) chestTouch.z -= 0.05;
@@ -384,11 +407,16 @@ function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
       targets.arms = both((s) => ({
         grip: [sx(s, gripX), c[1], c[2]],
         across: [sx(s, 1), 0, incline ? -0.05 : 0],
-        elbow: [sx(s, 0.6), -0.5, 0.7],
+        // Elbows ~45° from the torso, under the bar (the incline's torso
+        // axis is tilted, so its elbows tuck further towards the hips).
+        elbow: incline ? [sx(s, 0.45), -0.75, 0.9] : [sx(s, 0.6), -0.5, 0.7],
+        point: 'heel',
         wrist: 12,
         fingers: 1,
       }));
       targets.gaze = [0, c[1] + 1, c[2]];
+      // Last: gaze also turns the head.
+      restHead(solver, targets, padPoint, padNormal);
       return {
         targets,
         bar: barbell ? { center: c } : undefined,
@@ -445,7 +473,9 @@ function overheadPress(kind: 'barbell' | 'dumbbells'): Clip {
         grip: [sx(s, gripX), c[1], c[2]],
         across: [sx(s, 1), 0, 0],
         elbow: [sx(s, mix(0.4, 1, k)), -1, mix(0.9, 0, k)],
-        wrist: 10,
+        // Forearms stay near vertical under the bar; knuckles tip back ~10°
+        // (a fixed hand direction avoids the hand/forearm feedback loop).
+        hand: [sx(s, -0.05), 1, -0.18],
         fingers: 1,
       }));
       balance(solver, targets, midfoot(ballZ), [handsLoad(barbell ? 0.5 : 0.3)]);
@@ -509,8 +539,9 @@ const FOOT_GAP = 0.11;
 /** Walking lunges with dumbbells: two reps travelling forward, then re-materialise. */
 function walkingLunge(): Clip {
   const duration = 6.4;
-  const stride = 0.78;
-  const z0 = -0.78;
+  // Shorter than a gym-floor lunge so both reps fit on the projector disc.
+  const stride = 0.66;
+  const z0 = -0.6;
   // Foot travel (z) per side; swing segments lift the foot.
   const lz = keys(
     duration,
@@ -574,15 +605,16 @@ function walkingLunge(): Clip {
       const heel = Math.min(1, gap / 0.4) * mix(20, 48, d);
       const foot = (s: Side, z: number) => {
         const up = lift(s === 'l' ? lz : rz, t);
-        const isRear = s === rear && gap > 0.1;
+        // How much this foot acts as the rear foot (0 while the feet pass).
+        const r = s === rear ? smoothstep(0.04, 0.2, gap) : 0;
         return {
           foot: {
             at: [sx(s, FOOT_GAP), up, z] as Vec,
             pivot: 'ball' as const,
-            pitch: isRear ? heel : up * 120,
+            pitch: mix(up * 120, heel, r),
             out: 5,
           },
-          knee: kneeOverToes(s, 5, isRear ? 0.3 : 0),
+          knee: kneeOverToes(s, 5, 0.3 * r),
         };
       };
       const targets: BodyTargets = {
@@ -1057,6 +1089,7 @@ function tricepsExtension(): Clip {
         },
         arms: both((s) => ({
           fk: { upper: [upper, 14], fore: [mix(upper + 125, upper + 6, k), mix(6, 10, k)] },
+          elbow: [0, 0, 1],
           palm: [sx(s, -1), 0, 0],
           fingers: 1,
         })),
@@ -1196,13 +1229,14 @@ function oneArmRow(): Clip {
  * hologram fades and re-materialises at the start (no foot sliding).
  */
 function carry(kind: 'both' | 'right'): Clip {
-  const strides = 2;
+  // One stride (two steps) so the walk stays on the projector disc.
+  const strides = 1;
   const strideTime = 1.0;
   const fadeTime = 0.3;
   const duration = strides * strideTime + 2 * fadeTime;
-  const step = 0.46;
+  const step = 0.42;
   // Centres the walk on the projector disc.
-  const z0 = step / 2 + 0.1 - step * strides;
+  const z0 = step / 2 + 0.2 - step * strides;
   // Foot phase: 0 = heel strike of the left foot.
   const footAt = (side: Side, time: number) => {
     const phase = time / strideTime + (side === 'r' ? 0.5 : 0);
@@ -1286,13 +1320,27 @@ function carry(kind: 'both' | 'right'): Clip {
   };
 }
 
-/** Easy run on a treadmill: ~172 steps/min, mid-foot strike under the body. */
-function run(): Clip {
-  const duration = 0.7; // one stride = two steps
-  const speed = 2.7; // m/s belt speed (~10 km/h)
+/** Treadmill run parameters for an easy (zone 2) run and fast intervals. */
+const RUNS = {
+  // ~9 km/h, 164 steps/min, short stride, upright, relaxed arms.
+  easy: { duration: 0.73, speed: 2.5, contact: 0.4, kick: 0.26, knee: 0.14, lean: 4, arm: 26 },
+  // ~14 km/h, 180 steps/min, longer stride, more lean, high heel kick, driving arms.
+  intervals: {
+    duration: 0.667,
+    speed: 3.9,
+    contact: 0.3,
+    kick: 0.4,
+    knee: 0.2,
+    lean: 8,
+    arm: 40,
+  },
+} as const;
+
+/** Run on a treadmill: mid-foot strike under the body, cadence/stride per pace. */
+function run(pace: keyof typeof RUNS): Clip {
+  const { duration, speed, contact, kick, knee, lean, arm } = RUNS[pace];
   const deck = TREADMILL.deck;
-  const contact = 0.36; // stance fraction of the stride
-  const strikeZ = 0.2;
+  const strikeZ = pace === 'easy' ? 0.17 : 0.22;
   const toeOffZ = strikeZ - speed * duration * contact;
   // Swing path of the ball of the foot (phase 0 = touchdown).
   const swing = loopSpline(
@@ -1300,10 +1348,10 @@ function run(): Clip {
     [
       [strikeZ, 0, -6],
       [toeOffZ, 0, 40],
-      [toeOffZ - 0.06, 0.2, 55],
-      [-0.08, 0.32, 20],
-      [0.3, 0.16, -4],
-      [0.3, 0.035, -12],
+      [toeOffZ - 0.06, kick * 0.62, 55],
+      [-0.08, kick, 20],
+      [strikeZ + 0.1, knee, -4],
+      [strikeZ + 0.1, 0.035, -12],
     ],
   );
   const footAt = (phase: number) => {
@@ -1337,18 +1385,20 @@ function run(): Clip {
       const armPhase = Math.cos(2 * Math.PI * (phase - 0.04));
       const targets: BodyTargets = {
         hips: {
-          pos: [0, deck + 0.94 + bounce * 0.03, -0.02],
-          pitch: 6,
+          // Low enough that the knees never lock (a straight leg makes the
+          // IK knee snap when the other leg takes over the support).
+          pos: [0, deck + (pace === 'easy' ? 0.9 : 0.86) + bounce * 0.03, -0.02],
+          pitch: 2 + lean,
           yaw: -legPhase * 6,
           roll: Math.sin(4 * Math.PI * phase) * 2,
         },
-        spine: { pitch: 4, twist: legPhase * 13 },
+        spine: { pitch: lean, twist: legPhase * (pace === 'easy' ? 11 : 15) },
         gaze: [0, 1.5, 6],
         legs,
         arms: both((s) => {
           const a = (s === 'l' ? -1 : 1) * armPhase;
           return {
-            fk: { upper: [a * 32 - 6, 10], fore: [a * 32 + 82, 4 - a * 6] },
+            fk: { upper: [a * arm - 6, 10], fore: [a * arm + 82, 4 - a * 6] },
             palm: [sx(s, -1), 0.4, 0],
             fingers: 0.6,
           };
@@ -1490,7 +1540,8 @@ export const CLIPS: Record<AnimationId, Clip> = {
   'lateral-raise': lateralRaise(),
   carry: carry('both'),
   'carry-one': carry('right'),
-  run: run(),
+  run: run('easy'),
+  'run-intervals': run('intervals'),
   bike: bike(),
   mobility: thoracicRotation(),
   'cat-cow': catCow(),

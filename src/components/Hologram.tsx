@@ -1,4 +1,5 @@
 import { Component, Suspense, lazy, type ReactNode } from 'react';
+import { isModelLoadError } from '../hologram/modelError';
 import type { AnimationId } from '../plan';
 
 // three.js and the scene are only downloaded when an exercise is opened.
@@ -12,49 +13,76 @@ interface HologramProps {
   exerciseName: string;
   /** Result of WebGL detection (owned by the parent so it can hide controls). */
   webgl: boolean;
-  /** Called when the 3D scene fails at runtime (e.g. context creation error). */
+  /** Called when the 3D scene fails at runtime (e.g. context creation error), not for model loads. */
   onUnavailable: () => void;
 }
 
-class HologramErrorBoundary extends Component<
-  { fallback: ReactNode; onError: () => void; children: ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false };
+type Failure = 'model' | 'runtime' | null;
 
-  static getDerivedStateFromError() {
-    return { failed: true };
+class HologramErrorBoundary extends Component<
+  {
+    renderFallback: (failure: Exclude<Failure, null>, retry: () => void) => ReactNode;
+    onUnavailable: () => void;
+    children: ReactNode;
+  },
+  { failure: Failure }
+> {
+  state: { failure: Failure } = { failure: null };
+
+  static getDerivedStateFromError(error: unknown): { failure: Failure } {
+    return { failure: isModelLoadError(error) ? 'model' : 'runtime' };
   }
 
   componentDidCatch(error: unknown) {
     console.error('Hologram failed to render', error);
-    this.props.onError();
+    // A model that failed to download may load next time; only a broken 3D
+    // context disables WebGL (and its controls) for the rest of the visit.
+    if (!isModelLoadError(error)) this.props.onUnavailable();
   }
 
+  private retry = () => this.setState({ failure: null });
+
   render() {
-    return this.state.failed ? this.props.fallback : this.props.children;
+    const { failure } = this.state;
+    return failure ? this.props.renderFallback(failure, this.retry) : this.props.children;
   }
 }
 
-function Fallback({ children }: { children: ReactNode }) {
+function Fallback({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <div className="hologram-fallback" role="status">
       <span className="hologram-fallback__figure" aria-hidden="true" />
       <p>{children}</p>
+      {action}
     </div>
   );
 }
 
-export function Hologram({ webgl, onUnavailable, exerciseName, ...stage }: HologramProps) {
-  const noWebgl = (
-    <Fallback>
-      3D ukážka nie je dostupná – prehliadač nepodporuje WebGL alebo sa model nepodarilo načítať.
-      Riaď sa popisom techniky.
+const NO_WEBGL = (
+  <Fallback>
+    3D ukážka nie je dostupná, pretože prehliadač nepodporuje WebGL. Riaď sa popisom techniky.
+  </Fallback>
+);
+
+function renderFailure(failure: 'model' | 'runtime', retry: () => void): ReactNode {
+  if (failure === 'runtime') return NO_WEBGL;
+  return (
+    <Fallback
+      action={
+        <button type="button" className="button" onClick={retry}>
+          Skúsiť znova
+        </button>
+      }
+    >
+      3D model postavy sa nepodarilo načítať. Riaď sa popisom techniky alebo to skús znova.
     </Fallback>
   );
-  if (!webgl) return noWebgl;
+}
+
+export function Hologram({ webgl, onUnavailable, exerciseName, ...stage }: HologramProps) {
+  if (!webgl) return NO_WEBGL;
   return (
-    <HologramErrorBoundary fallback={noWebgl} onError={onUnavailable}>
+    <HologramErrorBoundary renderFallback={renderFailure} onUnavailable={onUnavailable}>
       <Suspense fallback={<Fallback>Načítavam hologram…</Fallback>}>
         <HologramStage
           {...stage}

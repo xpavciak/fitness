@@ -10,7 +10,7 @@
  *   african-male-young.target, asian-male-young.target, caucasian-male-young.target,
  *   universal-male-young-maxmuscle-averageweight.target
  *
- * Output: a skinned mesh (body + eyes) with a simplified 30-bone skeleton in
+ * Output: a skinned mesh (body + eyes) with a simplified 33-bone skeleton in
  * metres (y up, facing +z, feet on y = 0). All bones have identity rest
  * rotations, so a pose is fully described by world-space bone rotations.
  * Vertex data uses KHR_mesh_quantization (int8 normals, uint8 joints/weights),
@@ -26,6 +26,32 @@ if (!SRC) {
   console.error('usage: node scripts/build-human-model.mjs <makehuman-download-dir>');
   process.exit(1);
 }
+
+/**
+ * sha256 of every input file (MakeHuman commit a8bc2d54ff0a, see docs/ASSETS.md).
+ * The build refuses to run on anything else, so the output is reproducible and
+ * a tampered or truncated download is caught before it is parsed.
+ */
+const SOURCES = {
+  'base.obj': '8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c',
+  'default.mhskel': '99f179bce0aa850b45d4191a1d0d234c5851f881c057439470ded3bddf729a24',
+  'default_weights.mhw': '0f3641d651ae3d00ad6b4ccee43142edb109d3bd909d27d9e4139ef1beed8625',
+  'african-male-young.target': '894abc1fbb3d28543a51fef16f89d5d4bdf9aa2e1534413339811a3d47818b7d',
+  'asian-male-young.target': 'ed2e8c191cb6b87b4a2d97c80486acb2604fa549316c7aa2a738a5d5a14334dc',
+  'caucasian-male-young.target': '70e228ba7164737dae664454394536fc5935fa48d333c1a97d77e2dc6eacc5f5',
+  'universal-male-young-maxmuscle-averageweight.target':
+    'c171ff9cc95e96273beb3e3b1969a01988c2d4982ebc6fe04bf81cf72ee3b295',
+};
+for (const [file, expected] of Object.entries(SOURCES)) {
+  const actual = createHash('sha256')
+    .update(readFileSync(join(SRC, file)))
+    .digest('hex');
+  if (actual !== expected) {
+    console.error(`${file}: sha256 ${actual} does not match the pinned ${expected}`);
+    process.exit(1);
+  }
+}
+
 const ROOT = new URL('..', import.meta.url).pathname;
 const OUT_GLB = join(ROOT, 'public/models/human.glb');
 const OUT_TS = join(ROOT, 'src/hologram/humanSkeleton.ts');

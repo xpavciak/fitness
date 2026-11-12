@@ -7,6 +7,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { AnimationId } from '../plan/types';
 import { CLIPS } from './clips';
+import { FLAT_BENCH, INCLINE_BENCH } from './layout';
 import { HologramController } from './controller';
 import { boneIndex } from './skeleton';
 
@@ -80,6 +81,49 @@ describe('HologramController with the real model', () => {
     expect(c.bodyMaterial.uniforms.uFade!.value).toBe(1);
     expect(c.bodyDepthMaterial.uniforms.uBreath).toBe(c.bodyMaterial.uniforms.uBreath);
     c.dispose();
+  });
+
+  it('the skinned head rests on the bench pad without sinking in or hanging off', () => {
+    const head = boneIndex('head');
+    const cases = [
+      { id: 'bench-press', point: [0, FLAT_BENCH.top, 0], normal: [0, 1, 0] },
+      { id: 'bench-press-dumbbells', point: [0, FLAT_BENCH.top, 0], normal: [0, 1, 0] },
+      {
+        id: 'incline-press',
+        point: [0, INCLINE_BENCH.seatTop, INCLINE_BENCH.seatBack],
+        normal: [0, Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)],
+      },
+    ] as const;
+    for (const { id, point, normal } of cases) {
+      const c = new HologramController(id, model);
+      const mesh = c.rig.mesh;
+      const idx = mesh.geometry.getAttribute('skinIndex');
+      const wgt = mesh.geometry.getAttribute('skinWeight');
+      const n = new Vector3(...normal);
+      const p0 = new Vector3(...point);
+      for (const t of [0.2, 2.9]) {
+        c.evaluate(t);
+        c.root.updateMatrixWorld(true);
+        mesh.skeleton.update();
+        let lowest = Infinity;
+        let headEnd = Infinity;
+        const v = new Vector3();
+        for (let i = 0; i < idx.count; i++) {
+          let w = 0;
+          for (let k = 0; k < 4; k++)
+            if (idx.getComponent(i, k) === head) w += wgt.getComponent(i, k);
+          if (w < 0.5) continue;
+          mesh.getVertexPosition(i, v);
+          mesh.localToWorld(v);
+          lowest = Math.min(lowest, v.clone().sub(p0).dot(n));
+          headEnd = Math.min(headEnd, v.z);
+        }
+        expect(lowest, `${id} @${t}`).toBeGreaterThan(-0.01);
+        expect(lowest, `${id} @${t}`).toBeLessThan(0.02);
+        if (id !== 'incline-press') expect(headEnd - FLAT_BENCH.zHead, id).toBeGreaterThan(0.02);
+      }
+      c.dispose();
+    }
   });
 
   it('rejects a model whose skeleton does not match', () => {

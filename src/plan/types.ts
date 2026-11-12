@@ -41,6 +41,7 @@ export type AnimationId =
   | 'lateral-raise'
   | 'carry'
   | 'run'
+  | 'run-intervals'
   | 'bike'
   | 'mobility'
   | 'cat-cow'

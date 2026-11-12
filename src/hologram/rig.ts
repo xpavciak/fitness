@@ -9,6 +9,7 @@ import {
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { BONE_NAMES, PARENT, REST_HEAD } from './skeleton';
 import type { BodyPose } from './solver';
+import { ModelMismatchError } from './modelError';
 
 /**
  * The human figure: the skinned mesh from public/models/human.glb (CC0,
@@ -17,12 +18,11 @@ import type { BodyPose } from './solver';
  */
 export interface Rig {
   container: Group;
+  /** The visible skinned body (shares geometry and skeleton with its depth twin). */
+  mesh: SkinnedMesh;
   bones: Bone[];
   dispose: () => void;
 }
-
-/** Thrown when the model does not match the generated skeleton data. */
-export class ModelMismatchError extends Error {}
 
 export function createRig(
   modelScene: Object3D,
@@ -62,6 +62,7 @@ export function createRig(
   container.add(scene);
   return {
     container,
+    mesh: body,
     bones,
     dispose: () => {
       body.geometry.dispose();
@@ -74,7 +75,9 @@ const inv = new Quaternion();
 
 /** Writes a solved pose into the skeleton (rest rotations are identity). */
 export function applyPose(rig: Rig, pose: BodyPose): void {
-  rig.bones.forEach((bone, i) => {
+  const bones = rig.bones;
+  for (let i = 0; i < bones.length; i++) {
+    const bone = bones[i]!;
     const parent = PARENT[i]!;
     if (parent < 0) {
       bone.position.copy(pose.pos[i]!);
@@ -82,5 +85,5 @@ export function applyPose(rig: Rig, pose: BodyPose): void {
     } else {
       bone.quaternion.copy(inv.copy(pose.rot[parent]!).invert().multiply(pose.rot[i]!));
     }
-  });
+  }
 }

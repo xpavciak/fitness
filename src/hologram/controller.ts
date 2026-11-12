@@ -1,6 +1,7 @@
 import type { Mesh, Object3D, ShaderMaterial } from 'three';
 import type { AnimationId } from '../plan/types';
 import type { ClipFrame } from './clipKit';
+import { ClipCache } from './clipCache';
 import { getClip } from './clips';
 import {
   createBeamMaterial,
@@ -11,7 +12,7 @@ import {
 import { createProps, type Props } from './props';
 import { applyPose, createRig, type Rig } from './rig';
 import { boneIndex } from './skeleton';
-import { BodySolver } from './solver';
+import { BodySolver, createPose } from './solver';
 
 const CYAN = '#38e8ff';
 /** Clamp large frame gaps (e.g. after a background tab) to avoid jumps. */
@@ -40,6 +41,8 @@ export class HologramController {
   private effectsTime = 0;
   private ring: Mesh | null = null;
   private readonly solver = new BodySolver();
+  private readonly pose = createPose();
+  private cache: ClipCache;
   private readonly glowMaterials: readonly ShaderMaterial[] = [
     this.bodyMaterial,
     this.propMaterial,
@@ -59,12 +62,14 @@ export class HologramController {
     this.props = createProps(this.propMaterial, this.propDepthMaterial);
     this.rig.container.add(this.props.root);
     this.root = this.rig.container;
+    this.cache = new ClipCache(getClip(animation));
   }
 
   setAnimation(id: AnimationId): void {
     if (id !== this.animation) {
       this.animation = id;
       this.animationTime = 0;
+      this.cache = new ClipCache(getClip(id));
     }
   }
 
@@ -72,14 +77,14 @@ export class HologramController {
     this.ring = ring;
   }
 
-  /** Evaluates the current clip (exposed for tests and debugging). */
+  /**
+   * Poses the figure and props at `time` (exposed for tests and debugging).
+   * Poses come from the clip's sample cache; the returned frame is reused.
+   */
   evaluate(time: number): ClipFrame {
-    const clip = getClip(this.animation);
-    const t = ((time % clip.duration) + clip.duration) % clip.duration;
-    const frame = clip.frame(t, this.solver);
-    const pose = this.solver.solve(frame.targets);
-    applyPose(this.rig, pose);
-    this.props.update(clip.props, frame, pose);
+    const frame = this.cache.evaluate(time, this.solver, this.pose);
+    applyPose(this.rig, this.pose);
+    this.props.update(this.cache.clip.props, frame, this.pose);
     return frame;
   }
 

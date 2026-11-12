@@ -216,8 +216,8 @@ export function createProps(material: Material, depthMaterial: Material): Props 
       // Safety arm just below the bottom bar position, J-hook at shoulder height.
       box(
         rack,
-        [0.06, 0.06, r.zFront - r.zBack + 0.1],
-        [x, r.safety, (r.zFront + r.zBack) / 2 + 0.05],
+        [0.06, r.safetyThickness, r.zFront - r.zBack + 0.1],
+        [x, r.safetyTop - r.safetyThickness / 2, (r.zFront + r.zBack) / 2 + 0.05],
       );
       box(rack, [0.06, 0.05, 0.14], [x, r.hook, r.zBack + 0.1]);
       box(rack, [0.06, 0.08, 0.02], [x, r.hook + 0.04, r.zBack + 0.16]);
@@ -318,8 +318,11 @@ export function createProps(material: Material, depthMaterial: Material): Props 
   box(mat, [MAT.width, MAT.thickness, MAT.length], [0, MAT.thickness / 2, -0.05]);
 
   // ------------------------------------------------------------- update
-  const handAt = (pose: BodyPose, s: Side, target: Object3D) => {
-    gripPoint(pose, s, target.position);
+  const handAt = (pose: BodyPose, frame: ClipFrame, s: Side, target: Object3D) => {
+    // Same point the clip's IK put on the handle (full grip or palm heel).
+    const arm = frame.targets.arms[s];
+    const kind = !('fk' in arm) && arm.point === 'heel' ? 'heel' : 'grip';
+    gripPoint(pose, s, target.position, kind);
     target.quaternion.setFromUnitVectors(X, gripAxis(pose, s, va));
   };
 
@@ -340,10 +343,10 @@ export function createProps(material: Material, depthMaterial: Material): Props 
         }
       }
       if (dumbbellGroup.visible) {
-        handAt(pose, 'l', dumbbells.l);
-        handAt(pose, 'r', dumbbells.r);
+        handAt(pose, frame, 'l', dumbbells.l);
+        handAt(pose, frame, 'r', dumbbells.r);
       }
-      if (singleGroup.visible) handAt(pose, 'r', single);
+      if (singleGroup.visible) handAt(pose, frame, 'r', single);
       if (pull.visible && frame.bar) {
         latBar.position.set(...frame.bar.center);
         stretch(pulldownCable, va.set(...PULLDOWN.pulley), vb.set(...frame.bar.center));

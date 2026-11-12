@@ -173,15 +173,15 @@ export function balance(
   /** Balance this point instead of the centre of mass (e.g. the bar). */
   point?: Load['at'],
 ): BodyTargets {
+  // Work on a private copy of the hips position (clips may share the array).
+  const pos: [number, number, number] = [...targets.hips.pos];
+  targets.hips = { ...targets.hips, pos };
   for (let k = 0; k < 3; k++) {
     const pose = solver.solve(targets);
     if (point) point(pose, com);
     else centerOfMass(pose, loads, com);
-    const p = targets.hips.pos;
-    targets.hips = {
-      ...targets.hips,
-      pos: [p[0] + (x === null ? 0 : x - com.x), p[1], p[2] + (z - com.z)],
-    };
+    if (x !== null) pos[0] += x - com.x;
+    pos[2] += z - com.z;
   }
   return targets;
 }

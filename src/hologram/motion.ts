@@ -69,14 +69,17 @@ export function track(duration: number, keys: readonly Key[]): (t: number) => nu
 /** Linear interpolation. */
 export const mix = (a: number, b: number, k: number): number => a + (b - a) * k;
 
-/** Component-wise interpolation of number tuples. */
-export function mixV<T extends readonly number[]>(a: T, b: T, k: number): T {
-  return a.map((v, i) => v + (b[i]! - v) * k) as unknown as T;
+/** Hermite smoothstep: 0 below `edge0`, 1 above `edge1`, smooth in between. */
+export function smoothstep(edge0: number, edge1: number, x: number): number {
+  const k = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return k * k * (3 - 2 * k);
 }
 
 /**
  * Periodic Catmull-Rom spline through `points` (each a tuple of numbers)
- * placed at the given phases in [0, 1). Returns a smooth closed curve.
+ * placed at the given phases in [0, 1). Returns a smooth closed curve. The
+ * returned array is reused between calls (no per-frame allocation): read it
+ * before calling the curve again.
  */
 export function loopSpline(
   phases: readonly number[],
@@ -84,6 +87,7 @@ export function loopSpline(
 ): (phase: number) => number[] {
   const n = points.length;
   if (n < 3 || phases.length !== n) throw new Error('loopSpline needs >= 3 matching points');
+  const out: number[] = new Array<number>(points[0]!.length).fill(0);
   return (phase: number) => {
     const p = ((phase % 1) + 1) % 1;
     let i = n - 1;
@@ -106,15 +110,15 @@ export function loopSpline(
     const P3 = points[(i + 2) % n]!;
     const u2 = u * u;
     const u3 = u2 * u;
-    return P1.map((_, c) => {
+    for (let c = 0; c < out.length; c++) {
       const a = P0[c]!;
       const b = P1[c]!;
       const d = P2[c]!;
       const e = P3[c]!;
-      return (
+      out[c] =
         0.5 *
-        (2 * b + (-a + d) * u + (2 * a - 5 * b + 4 * d - e) * u2 + (-a + 3 * b - 3 * d + e) * u3)
-      );
-    });
+        (2 * b + (-a + d) * u + (2 * a - 5 * b + 4 * d - e) * u2 + (-a + 3 * b - 3 * d + e) * u3);
+    }
+    return out;
   };
 }

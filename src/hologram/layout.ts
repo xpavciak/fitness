@@ -21,8 +21,8 @@ export const DUMBBELL = {
   headLength: 0.11,
 } as const;
 
-/** Flat bench, lifter's head towards -z. */
-export const FLAT_BENCH = { top: 0.44, width: 0.29, zHead: -1.02, zFoot: 0.18 } as const;
+/** Flat bench (1.3 m pad), lifter's head towards -z. */
+export const FLAT_BENCH = { top: 0.44, width: 0.29, zHead: -1.12, zFoot: 0.18 } as const;
 
 /** Incline bench at 30°: seat front at +z, back pad rising towards -z. */
 export const INCLINE_BENCH = {
@@ -30,7 +30,7 @@ export const INCLINE_BENCH = {
   seatFront: 0.22,
   seatBack: -0.12,
   angle: 30,
-  backLength: 0.86,
+  backLength: 0.92,
   width: 0.29,
 } as const;
 
@@ -40,18 +40,26 @@ export const ROW_BENCH = { top: 0.44, width: 0.29, x: 0.16, z0: -0.62, z1: 0.48 
 /** Box/bench for the rear foot of the Bulgarian split squat. */
 export const SPLIT_BENCH = { top: 0.44, z: -0.66, depth: 0.32, width: 0.4 } as const;
 
-/** Half rack behind a squatter at the origin: uprights, J-hooks, safety arms. */
+/**
+ * Half rack behind a squatter at the origin: uprights, J-hooks, safety arms.
+ * The safety arms' top sits ~2 cm under the bar's lowest point of the squat
+ * (as a lifter sets them), so the bar never touches them in a good rep.
+ */
 export const SQUAT_RACK = {
   halfWidth: 0.62,
   zFront: 0.5,
   zBack: -0.42,
   height: 1.95,
   hook: 1.36,
-  safety: 0.9,
+  safetyTop: 0.85,
+  safetyThickness: 0.06,
 } as const;
 
-/** Upright J-hooks at the head end of the flat bench. */
-export const BENCH_RACK = { halfWidth: 0.56, z: -0.86, height: 1.14 } as const;
+/**
+ * Upright J-hooks at the head end of the flat bench; the racked bar (in the
+ * hooks, ~6 cm in front of the uprights) sits over the lifter's eyes.
+ */
+export const BENCH_RACK = { halfWidth: 0.56, z: -0.99, height: 1.14 } as const;
 
 /** Lat pulldown station. */
 export const PULLDOWN = {

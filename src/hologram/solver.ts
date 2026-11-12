@@ -74,7 +74,7 @@ export interface ArmIK {
   grip: Vec;
   /** When set, grip/elbow/across/hand/palm are rest coordinates carried by this bone. */
   frame?: BoneName;
-  point?: 'grip' | 'palm' | 'wrist';
+  point?: GripKind | 'palm' | 'wrist';
   /** World direction the elbow points to. */
   elbow: Vec;
   /** Bar axis through the fist, index -> little finger. */
@@ -92,6 +92,11 @@ export interface ArmIK {
 export interface ArmFK {
   /** Directions in the chest frame. */
   fk: { upper: Dir2; fore: Dir2 };
+  /**
+   * Where the elbow points (chest frame) while the arm is nearly straight;
+   * default backwards. Overhead arms that bend behind the head point forward.
+   */
+  elbow?: Vec;
   /** World direction the palm faces. */
   palm?: Vec;
   fingers?: number;
@@ -183,10 +188,19 @@ const bz = new Vector3();
 function basis(m: Matrix4, a: Vector3, b: Vector3) {
   bx.copy(a).normalize();
   by.copy(b).addScaledVector(bx, -b.dot(bx));
-  if (by.lengthSq() < 1e-10) by.copy(Math.abs(bx.y) < 0.9 ? Y : Z).addScaledVector(bx, -bx.y);
+  if (by.lengthSq() < 1e-10) {
+    by.copy(Math.abs(bx.y) < 0.9 ? Y : Z);
+    by.addScaledVector(bx, -by.dot(bx));
+  }
   by.normalize();
   bz.crossVectors(bx, by);
   m.makeBasis(bx, by, bz);
+}
+
+/** Any unit vector perpendicular to `a`. */
+function basisFallback(a: Vector3, out: Vector3): Vector3 {
+  out.copy(Math.abs(a.y) < 0.9 ? Y : Z);
+  return out.addScaledVector(a, -out.dot(a) / a.lengthSq()).normalize();
 }
 
 function setV(out: Vector3, v: Vec): Vector3 {
@@ -320,6 +334,7 @@ const pull = new Vector3();
 const vU = new Vector3();
 const vL = new Vector3();
 const vN = new Vector3();
+const vHinge = new Vector3();
 const q1 = new Quaternion();
 const q2 = new Quaternion();
 const qHand = new Quaternion();
@@ -340,8 +355,10 @@ function local(pose: BodyPose, i: number, q: Quaternion) {
 }
 
 /**
- * Two-bone IK in world space. Writes the middle joint into `joint` and
- * returns the reached distance ratio (1 = target reached).
+ * Two-bone IK in world space. Writes the middle joint into `joint` and the
+ * unit normal of the bend plane into `hinge` (the joint's hinge axis, oriented
+ * so the joint bends towards the pole). The target is clamped to the reachable
+ * range, so the chain is fully extended when it is out of reach.
  */
 function twoBone(
   root: Vector3,
@@ -350,13 +367,18 @@ function twoBone(
   b: number,
   pole: Vector3,
   joint: Vector3,
+  hinge: Vector3,
 ): void {
   v1.copy(target).sub(root);
   const d = Math.min(Math.max(v1.length(), Math.abs(a - b) + 1e-4), a + b - 1e-5);
   v1.normalize();
   v2.copy(pole).addScaledVector(v1, -pole.dot(v1));
-  if (v2.lengthSq() < 1e-8) v2.copy(Math.abs(v1.y) < 0.9 ? Y : Z).addScaledVector(v1, -v1.y);
+  if (v2.lengthSq() < 1e-8) {
+    v2.copy(Math.abs(v1.y) < 0.9 ? Y : Z);
+    v2.addScaledVector(v1, -v2.dot(v1));
+  }
   v2.normalize();
+  hinge.crossVectors(v2, v1).normalize();
   const cosA = Math.min(1, Math.max(-1, (a * a + d * d - b * b) / (2 * a * d)));
   const sinA = Math.sqrt(1 - cosA * cosA);
   joint
@@ -479,12 +501,9 @@ export class BodySolver {
     if ('foot' in leg) {
       const ankle = this.ankleTarget(s, leg.foot, vTarget, qHand);
       setV(vPole, leg.knee);
-      twoBone(hip, ankle, LIMB.thigh, LIMB.shin, vPole, vJoint);
+      twoBone(hip, ankle, LIMB.thigh, LIMB.shin, vPole, vJoint, vN);
       vU.copy(vJoint).sub(hip).normalize();
       vL.copy(ankle).sub(vJoint).normalize();
-      vN.crossVectors(v2.copy(vPole).addScaledVector(vU, -vPole.dot(vU)), vU);
-      if (vN.lengthSq() < 1e-8) vN.crossVectors(vU, vL);
-      vN.normalize();
       frameRotation(pose.rot[L.thigh]!, L.restThigh, L.restHinge, vU, vN);
       frameRotation(pose.rot[L.shin]!, L.restShin, L.restHinge, vL, vN);
       place(pose, L.shin);
@@ -516,13 +535,20 @@ export class BodySolver {
     local(pose, L.toes, eulerQ(q1, -(leg.fk.toes ?? 0), 0, 0, 'XYZ'));
   }
 
-  /** Hinge axis for FK limbs: from the bend, or from a pole when straight. */
+  /**
+   * Hinge axis for FK limbs: the bend plane's normal when the joint is bent,
+   * blending continuously into the pole's hinge as the limb straightens (a
+   * hard switch would twist the bone abruptly).
+   */
   private fkHinge(u: Vector3, l: Vector3, pole: Vector3, out: Vector3) {
     out.crossVectors(u, l);
-    if (out.lengthSq() < 0.02) {
-      out.crossVectors(v4.copy(pole).addScaledVector(u, -pole.dot(u)), u);
-    }
-    return out.normalize();
+    const bend = out.length();
+    const w = Math.max(0, 1 - bend / 0.3);
+    if (w === 0) return out.normalize();
+    v4.copy(pole).addScaledVector(u, -pole.dot(u));
+    v4.crossVectors(v4, u);
+    if (v4.lengthSq() < 1e-10) return bend > 1e-6 ? out.normalize() : basisFallback(u, out);
+    return out.addScaledVector(v4.normalize(), 0.08 * w * w).normalize();
   }
 
   private solveArm(s: Side, t: BodyTargets) {
@@ -564,7 +590,8 @@ export class BodySolver {
     if ('fk' in arm) {
       limbDirection(arm.fk.upper[0], arm.fk.upper[1], A.sign, vU).applyQuaternion(chestRot);
       limbDirection(arm.fk.fore[0], arm.fk.fore[1], A.sign, vL).applyQuaternion(chestRot);
-      this.fkHinge(vU, vL, v3.set(0, 0, -1).applyQuaternion(chestRot), vN);
+      const pole = arm.elbow ? setV(v3, arm.elbow) : v3.set(0, 0, -1);
+      this.fkHinge(vU, vL, pole.applyQuaternion(chestRot), vN);
       frameRotation(pose.rot[A.upper]!, A.restUpper, A.restHinge, vU, vN);
       frameRotation(pose.rot[A.fore]!, A.restFore, A.restHinge, vL, vN);
       // Hand continues the forearm, palm turned towards `palm`.
@@ -582,7 +609,9 @@ export class BodySolver {
         ? HAND[s].palmSkin
         : arm.point === 'wrist'
           ? REST_HEAD[A.hand]!
-          : HAND[s].grip;
+          : arm.point === 'heel'
+            ? HAND[s].heel
+            : HAND[s].grip;
     const handDir = v4;
     if (arm.hand) this.frameVector(arm, arm.hand, handDir);
     else handDir.copy(vTarget).sub(shoulder).normalize();
@@ -594,7 +623,7 @@ export class BodySolver {
         .sub(restPoint)
         .applyQuaternion(qHand)
         .add(vTarget);
-      twoBone(shoulder, wrist, LIMB.upperArm, LIMB.foreArm, vPole, vJoint);
+      twoBone(shoulder, wrist, LIMB.upperArm, LIMB.foreArm, vPole, vJoint, vHinge);
       vU.copy(vJoint).sub(shoulder).normalize();
       vL.copy(wrist).sub(vJoint).normalize();
       if (arm.hand) break;
@@ -602,15 +631,12 @@ export class BodySolver {
       if (arm.wrist) {
         // Extend the wrist: knuckles rotate towards the back of the hand.
         const palm = v2.copy(HAND[s].palm).applyQuaternion(qHand);
-        q1.setFromAxisAngle(vN.crossVectors(palm, handDir).normalize(), -arm.wrist * DEG);
+        q1.setFromAxisAngle(v1.crossVectors(palm, handDir).normalize(), -arm.wrist * DEG);
         handDir.applyQuaternion(q1);
       }
     }
-    vN.crossVectors(v2.copy(vPole).addScaledVector(vU, -vPole.dot(vU)), vU);
-    if (vN.lengthSq() < 1e-8) vN.crossVectors(vU, vL);
-    vN.normalize();
-    frameRotation(pose.rot[A.upper]!, A.restUpper, A.restHinge, vU, vN);
-    frameRotation(pose.rot[A.fore]!, A.restFore, A.restHinge, vL, vN);
+    frameRotation(pose.rot[A.upper]!, A.restUpper, A.restHinge, vU, vHinge);
+    frameRotation(pose.rot[A.fore]!, A.restFore, A.restHinge, vL, vHinge);
     this.finishArm(s, qHand, arm.fingers ?? 1);
   }
 
@@ -619,8 +645,10 @@ export class BodySolver {
     const pose = this.pose;
     const A = ARMS[s];
     place(pose, A.fore);
-    // Forearm pronation/supination: split the hand's twist about the forearm
-    // axis between the forearm (25 %) and its twist bone (80 %).
+    // Forearm pronation/supination: of the hand's twist about the forearm axis
+    // (relative to the untwisted forearm), the forearm bone takes 25 % (elbow
+    // end) and the twist bone 80 % (wrist end); both are measured from the
+    // untwisted forearm, not cumulative. The hand bone carries the full 100 %.
     q1.copy(pose.rot[A.fore]!).invert().multiply(hand);
     const axisDot = q1.x * A.restFore.x + q1.y * A.restFore.y + q1.z * A.restFore.z;
     const twist = 2 * Math.atan2(axisDot, q1.w);
@@ -664,9 +692,17 @@ export class BodySolver {
   }
 }
 
-/** World position of the grip point (bar axis in the fist) of a solved hand. */
-export function gripPoint(pose: BodyPose, s: Side, out = new Vector3()): Vector3 {
-  return worldPoint(pose, { bone: ARMS[s].hand, rest: HAND[s].grip }, out);
+/** Where a hand holds a bar: full grip (default) or low in the palm heel. */
+export type GripKind = 'grip' | 'heel';
+
+/** World position of the bar axis in a solved hand. */
+export function gripPoint(
+  pose: BodyPose,
+  s: Side,
+  out = new Vector3(),
+  kind: GripKind = 'grip',
+): Vector3 {
+  return worldPoint(pose, { bone: ARMS[s].hand, rest: HAND[s][kind] }, out);
 }
 
 export function palmPoint(pose: BodyPose, s: Side, out = new Vector3()): Vector3 {

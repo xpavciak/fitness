@@ -1,4 +1,5 @@
 /// <reference types="node" />
+import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Quaternion, Vector3 } from 'three';
@@ -220,6 +221,10 @@ describe('human model asset', () => {
     });
     // Only extensions three's GLTFLoader decodes without WASM.
     expect(gltf.extensionsRequired ?? []).toEqual(['KHR_mesh_quantization']);
-    expect(HUMAN_MODEL_HASH).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('is the exact file the generated skeleton (and cache-busting URL hash) belongs to', () => {
+    const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
+    expect(sha.slice(0, 12)).toBe(HUMAN_MODEL_HASH);
   });
 });
