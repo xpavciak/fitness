@@ -1,389 +1,86 @@
 import {
-  BoxGeometry,
-  CapsuleGeometry,
-  CylinderGeometry,
-  Euler,
   Group,
-  Mesh,
-  Object3D,
   Quaternion,
-  SphereGeometry,
-  Vector3,
-  type BufferGeometry,
-  type Material,
+  SkinnedMesh,
+  type Bone,
+  type Object3D,
+  type ShaderMaterial,
 } from 'three';
-import { limbDirection, type Clip, type FullPose, type PropKind } from './pose';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { BONE_NAMES, PARENT, REST_HEAD } from './skeleton';
+import type { BodyPose } from './solver';
 
 /**
- * Procedural humanoid built from capsules and spheres (no external assets).
- * Dimensions are in metres; the figure is ~1.8 m tall and faces +z.
+ * The human figure: the skinned mesh from public/models/human.glb (CC0,
+ * derived from MakeHuman, see docs/ASSETS.md) plus a depth-only twin that
+ * shares its geometry and skeleton.
  */
-const DIM = {
-  hipX: 0.095,
-  hipY: -0.05,
-  thigh: 0.44,
-  shin: 0.43,
-  shoulderX: 0.2,
-  shoulderY: 0.25,
-  upperArm: 0.29,
-  forearm: 0.26,
-  spineLen: 0.24,
-  chestLen: 0.3,
-};
-
-const DOWN = new Vector3(0, -1, 0);
-const DEG = Math.PI / 180;
-
-interface ArmParts {
-  upper: Group;
-  fore: Group;
-  hand: Object3D;
-}
-
-interface LegParts {
-  thigh: Group;
-  shin: Group;
-  foot: Group;
-  ankle: Object3D;
-}
-
 export interface Rig {
-  /** Add this to the scene. */
   container: Group;
-  body: Group;
-  spine: Group;
-  chest: Group;
-  neck: Group;
-  arms: [ArmParts, ArmParts];
-  legs: [LegParts, LegParts];
-  groundAnchors: Object3D[];
-  props: {
-    barbell: Object3D;
-    /** [left hand, right hand] */
-    dumbbells: [Object3D, Object3D];
-    bench: Object3D;
-    inclineBench: Object3D;
-    rowBench: Object3D;
-    splitBench: Object3D;
-    seat: Object3D;
-  };
+  bones: Bone[];
   dispose: () => void;
 }
 
-export function createRig(bodyMaterial: Material, propMaterial: Material): Rig {
-  const geometries: BufferGeometry[] = [];
-  const track = <T extends BufferGeometry>(g: T): T => {
-    geometries.push(g);
-    return g;
-  };
+/** Thrown when the model does not match the generated skeleton data. */
+export class ModelMismatchError extends Error {}
 
-  /** Capsule hanging down from the parent origin. */
-  const limb = (parent: Object3D, radius: number, length: number): void => {
-    const mesh = new Mesh(
-      track(new CapsuleGeometry(radius, length - radius * 2, 6, 14)),
-      bodyMaterial,
-    );
-    mesh.position.y = -length / 2;
-    parent.add(mesh);
-  };
-  const ball = (parent: Object3D, radius: number, pos: [number, number, number]) => {
-    const mesh = new Mesh(track(new SphereGeometry(radius, 20, 14)), bodyMaterial);
-    mesh.position.set(...pos);
-    parent.add(mesh);
-    return mesh;
-  };
-  /** Invisible marker; `radius` is the body surface distance used for grounding. */
-  const anchor = (parent: Object3D, pos: [number, number, number], radius = 0) => {
-    const o = new Object3D();
-    o.position.set(...pos);
-    o.userData.radius = radius;
-    parent.add(o);
-    return o;
-  };
+export function createRig(
+  modelScene: Object3D,
+  bodyMaterial: ShaderMaterial,
+  depthMaterial: ShaderMaterial,
+): Rig {
+  // The loader caches the parsed scene; clone so every stage owns its bones.
+  const scene = cloneSkinned(modelScene);
+  let mesh: SkinnedMesh | null = null;
+  scene.traverse((o) => {
+    if ((o as SkinnedMesh).isSkinnedMesh) mesh = o as SkinnedMesh;
+  });
+  const body = mesh as SkinnedMesh | null;
+  if (!body) throw new ModelMismatchError('Human model has no skinned mesh');
+
+  const bones = BONE_NAMES.map((name, i) => {
+    const bone = body.skeleton.bones.find((b) => b.name === name);
+    if (!bone) throw new ModelMismatchError(`Human model is missing bone ${name}`);
+    const parent = PARENT[i]!;
+    const expected = parent < 0 ? REST_HEAD[i]! : REST_HEAD[i]!.clone().sub(REST_HEAD[parent]!);
+    if (bone.position.distanceTo(expected) > 1e-3) {
+      throw new ModelMismatchError(`Bone ${name} does not match the skeleton data`);
+    }
+    return bone;
+  });
+
+  body.material = bodyMaterial;
+  body.frustumCulled = false;
+  body.renderOrder = 2;
+  const depth = new SkinnedMesh(body.geometry, depthMaterial);
+  depth.bind(body.skeleton, body.bindMatrix);
+  depth.frustumCulled = false;
+  depth.renderOrder = 1;
+  body.parent?.add(depth);
 
   const container = new Group();
-  const body = new Group();
-  container.add(body);
-
-  // Pelvis.
-  const pelvis = ball(body, 1, [0, 0, 0]);
-  pelvis.scale.set(0.16, 0.1, 0.115);
-
-  // Torso.
-  const spine = new Group();
-  spine.position.y = 0.03;
-  body.add(spine);
-  const abdomen = new Mesh(track(new CapsuleGeometry(0.115, 0.1, 6, 16)), bodyMaterial);
-  abdomen.position.y = 0.12;
-  abdomen.scale.set(1.15, 1, 0.85);
-  spine.add(abdomen);
-
-  const chest = new Group();
-  chest.position.y = DIM.spineLen;
-  spine.add(chest);
-  const ribcage = ball(chest, 1, [0, 0.14, 0]);
-  ribcage.scale.set(0.19, 0.17, 0.125);
-  const neck = new Group();
-  neck.position.y = DIM.chestLen;
-  chest.add(neck);
-  limb(neck, 0.045, 0.1);
-  const neckMesh = neck.children[0];
-  if (neckMesh) neckMesh.position.y = 0.04;
-  const head = ball(neck, 1, [0, 0.17, 0.01]);
-  head.scale.set(0.095, 0.115, 0.105);
-  const headAnchor = anchor(neck, [0, 0.29, 0]);
-
-  const makeArm = (sign: 1 | -1): ArmParts => {
-    const shoulder = new Group();
-    shoulder.position.set(sign * DIM.shoulderX, DIM.shoulderY, 0);
-    chest.add(shoulder);
-    ball(shoulder, 0.06, [0, 0, 0]);
-    const upper = new Group();
-    shoulder.add(upper);
-    limb(upper, 0.052, DIM.upperArm);
-    const fore = new Group();
-    fore.position.y = -DIM.upperArm;
-    upper.add(fore);
-    ball(fore, 0.045, [0, 0, 0]);
-    limb(fore, 0.042, DIM.forearm);
-    const hand = anchor(fore, [0, -DIM.forearm - 0.04, 0], 0.048);
-    ball(hand, 0.048, [0, 0, 0]);
-    return { upper, fore, hand };
-  };
-
-  const makeLeg = (sign: 1 | -1): LegParts => {
-    const thigh = new Group();
-    thigh.position.set(sign * DIM.hipX, DIM.hipY, 0);
-    body.add(thigh);
-    limb(thigh, 0.075, DIM.thigh);
-    const shin = new Group();
-    shin.position.y = -DIM.thigh;
-    thigh.add(shin);
-    ball(shin, 0.06, [0, 0, 0]);
-    limb(shin, 0.056, DIM.shin);
-    const ankle = anchor(shin, [0, -DIM.shin, 0]);
-    const foot = new Group();
-    ankle.add(foot);
-    const footMesh = new Mesh(track(new BoxGeometry(0.09, 0.06, 0.24)), bodyMaterial);
-    footMesh.position.set(0, -0.04, 0.06);
-    foot.add(footMesh);
-    anchor(foot, [0, -0.07, -0.06]);
-    anchor(foot, [0, -0.07, 0.18]);
-    return { thigh, shin, foot, ankle };
-  };
-
-  const arms: [ArmParts, ArmParts] = [makeArm(1), makeArm(-1)];
-  const legs: [LegParts, LegParts] = [makeLeg(1), makeLeg(-1)];
-
-  legs.forEach((l) => (l.shin.userData.radius = 0.06));
-  arms.forEach((a) => (a.fore.userData.radius = 0.045));
-  const groundAnchors: Object3D[] = [
-    // Foot children after the mesh are the heel and toe anchors.
-    ...legs.flatMap((l) => [...l.foot.children.slice(1), l.shin]),
-    ...arms.flatMap((a) => [a.hand, a.fore]),
-    headAnchor,
-  ];
-
-  // ---------------------------------------------------------------- props
-  const barbell = new Group();
-  const bar = new Mesh(track(new CylinderGeometry(0.014, 0.014, 1.9, 8)), propMaterial);
-  bar.rotation.z = Math.PI / 2;
-  barbell.add(bar);
-  for (const x of [-0.72, 0.72]) {
-    const plate = new Mesh(track(new CylinderGeometry(0.2, 0.2, 0.06, 28)), propMaterial);
-    plate.rotation.z = Math.PI / 2;
-    plate.position.x = x;
-    barbell.add(plate);
-  }
-  container.add(barbell);
-
-  const makeDumbbell = (arm: ArmParts): Object3D => {
-    const db = new Group();
-    const handle = new Mesh(track(new CylinderGeometry(0.014, 0.014, 0.26, 8)), propMaterial);
-    handle.rotation.z = Math.PI / 2;
-    db.add(handle);
-    for (const x of [-0.1, 0.1]) {
-      const bell = new Mesh(track(new CylinderGeometry(0.06, 0.06, 0.06, 16)), propMaterial);
-      bell.rotation.z = Math.PI / 2;
-      bell.position.x = x;
-      db.add(bell);
-    }
-    arm.hand.add(db);
-    return db;
-  };
-  const dumbbells: [Object3D, Object3D] = [makeDumbbell(arms[0]), makeDumbbell(arms[1])];
-
-  /** Box helper for benches: size and centre position in world metres. */
-  const box = (
-    parent: Object3D,
-    size: [number, number, number],
-    pos: [number, number, number],
-    rotX = 0,
-  ) => {
-    const mesh = new Mesh(track(new BoxGeometry(...size)), propMaterial);
-    mesh.position.set(...pos);
-    mesh.rotation.x = rotX;
-    parent.add(mesh);
-    return mesh;
-  };
-
-  // Flat bench under a lying lifter (bench press): head towards -z.
-  const bench = new Group();
-  box(bench, [0.32, 0.08, 1.2], [0, 0.46, -0.3]);
-  box(bench, [0.06, 0.42, 0.06], [0, 0.21, -0.8]);
-  box(bench, [0.06, 0.42, 0.06], [0, 0.21, 0.2]);
-  container.add(bench);
-
-  // Incline bench (~30°): seat plus a backrest aligned with the reclined torso.
-  const inclineBench = new Group();
-  box(inclineBench, [0.34, 0.06, 0.36], [0, 0.5, 0.02]);
-  box(inclineBench, [0.34, 0.9, 0.06], [0, 0.72, -0.4], -Math.PI / 3);
-  box(inclineBench, [0.06, 0.48, 0.06], [0, 0.24, 0.02]);
-  container.add(inclineBench);
-
-  // Flat bench along the left side for the one-arm row (knee and hand on it).
-  const rowBench = new Group();
-  box(rowBench, [0.32, 0.08, 1.05], [0.14, 0.47, 0.11]);
-  box(rowBench, [0.06, 0.43, 0.06], [0.14, 0.215, -0.3]);
-  box(rowBench, [0.06, 0.43, 0.06], [0.14, 0.215, 0.52]);
-  container.add(rowBench);
-
-  // Low bench behind the lifter for the rear foot of the Bulgarian split squat.
-  const splitBench = new Group();
-  box(splitBench, [0.34, 0.06, 0.42], [-0.095, 0.27, -0.6]);
-  box(splitBench, [0.06, 0.24, 0.06], [-0.095, 0.12, -0.6]);
-  container.add(splitBench);
-
-  const seat = new Group();
-  const seatTop = new Mesh(track(new BoxGeometry(0.4, 0.06, 0.38)), propMaterial);
-  seat.add(seatTop);
-  const post = new Mesh(track(new CylinderGeometry(0.03, 0.03, 1, 8)), propMaterial);
-  post.position.y = -0.5;
-  seat.add(post);
-  container.add(seat);
-
+  container.add(scene);
   return {
     container,
-    body,
-    spine,
-    chest,
-    neck,
-    arms,
-    legs,
-    groundAnchors,
-    props: { barbell, dumbbells, bench, inclineBench, rowBench, splitBench, seat },
-    dispose: () => geometries.forEach((g) => g.dispose()),
+    bones,
+    dispose: () => {
+      body.geometry.dispose();
+      body.skeleton.dispose();
+    },
   };
 }
 
-// Scratch objects reused every frame (applyPose runs at display refresh rate).
-const tmpDir = new Vector3();
-const tmpQ = new Quaternion();
-const tmpInv = new Quaternion();
-const tmpLowerAbs = new Quaternion();
-const tmpEuler = new Euler();
-const tmpA = new Vector3();
-const tmpB = new Vector3();
-const X_AXIS = new Vector3(1, 0, 0);
+const inv = new Quaternion();
 
-function directionQuaternion(out: Quaternion, pitch: number, side: number, sign: 1 | -1) {
-  const [x, y, z] = limbDirection(pitch, side, sign);
-  return out.setFromUnitVectors(DOWN, tmpDir.set(x, y, z));
-}
-
-/**
- * Two-segment limb: both directions are given in the parent frame. Returns the
- * lower segment's absolute orientation in a shared scratch quaternion.
- */
-function poseLimb(
-  upper: Object3D,
-  lower: Object3D,
-  upperP: number,
-  upperS: number,
-  lowerP: number,
-  lowerS: number,
-  sign: 1 | -1,
-): Quaternion {
-  directionQuaternion(upper.quaternion, upperP, upperS, sign);
-  const lowerAbs = directionQuaternion(tmpLowerAbs, lowerP, lowerS, sign);
-  tmpInv.copy(upper.quaternion).invert();
-  lower.quaternion.copy(tmpInv).multiply(lowerAbs);
-  return lowerAbs;
-}
-
-function poseLeg(
-  leg: LegParts,
-  thighP: number,
-  thighS: number,
-  shinP: number,
-  shinS: number,
-  footP: number,
-  sign: 1 | -1,
-): void {
-  const shinAbs = poseLimb(leg.thigh, leg.shin, thighP, thighS, shinP, shinS, sign);
-  tmpQ.setFromEuler(tmpEuler.set(footP * DEG, 0, 0));
-  leg.foot.quaternion.copy(shinAbs.invert()).multiply(tmpQ);
-}
-
-export function applyPose(rig: Rig, pose: FullPose, clip: Clip): void {
-  const { body } = rig;
-  body.position.set(pose.rootX, clip.grounded ? 1 : pose.rootY, pose.rootZ);
-  body.rotation.set(pose.rootP * DEG, pose.rootYaw * DEG, 0, 'YXZ');
-  rig.spine.rotation.set(pose.spineP * DEG, pose.spineT * DEG, pose.spineS * DEG);
-  rig.chest.rotation.set(pose.chestP * DEG, 0, 0);
-  rig.neck.rotation.set(pose.neckP * DEG, 0, 0);
-
-  const [lArm, rArm] = rig.arms;
-  poseLimb(lArm.upper, lArm.fore, pose.lArmP, pose.lArmS, pose.lForeP, pose.lForeS, 1);
-  poseLimb(rArm.upper, rArm.fore, pose.rArmP, pose.rArmS, pose.rForeP, pose.rForeS, -1);
-
-  const [lLeg, rLeg] = rig.legs;
-  poseLeg(lLeg, pose.lThighP, pose.lThighS, pose.lShinP, pose.lShinS, pose.lFootP, 1);
-  poseLeg(rLeg, pose.rThighP, pose.rThighS, pose.rShinP, pose.rShinS, pose.rFootP, -1);
-
-  rig.container.updateMatrixWorld(true);
-
-  if (clip.grounded) {
-    let minY = Infinity;
-    for (const a of rig.groundAnchors) {
-      const radius = typeof a.userData.radius === 'number' ? a.userData.radius : 0;
-      minY = Math.min(minY, a.getWorldPosition(tmpA).y - radius);
+/** Writes a solved pose into the skeleton (rest rotations are identity). */
+export function applyPose(rig: Rig, pose: BodyPose): void {
+  rig.bones.forEach((bone, i) => {
+    const parent = PARENT[i]!;
+    if (parent < 0) {
+      bone.position.copy(pose.pos[i]!);
+      bone.quaternion.copy(pose.rot[i]!);
+    } else {
+      bone.quaternion.copy(inv.copy(pose.rot[parent]!).invert().multiply(pose.rot[i]!));
     }
-    body.position.y -= minY;
-  }
-  if (clip.pinFeetZ !== null) {
-    const z = (lLeg.ankle.getWorldPosition(tmpA).z + rLeg.ankle.getWorldPosition(tmpB).z) / 2;
-    body.position.z += clip.pinFeetZ - z;
-  }
-  rig.container.updateMatrixWorld(true);
-
-  updateProps(rig, clip);
-}
-
-function hasProp(clip: Clip, kind: PropKind): boolean {
-  return clip.props.includes(kind);
-}
-
-function updateProps(rig: Rig, clip: Clip): void {
-  const { props } = rig;
-  props.barbell.visible = hasProp(clip, 'barbell');
-  props.bench.visible = hasProp(clip, 'bench');
-  props.inclineBench.visible = hasProp(clip, 'incline-bench');
-  props.rowBench.visible = hasProp(clip, 'row-bench');
-  props.splitBench.visible = hasProp(clip, 'split-bench');
-  props.seat.visible = hasProp(clip, 'seat');
-  const [leftDumbbell, rightDumbbell] = props.dumbbells;
-  leftDumbbell.visible = hasProp(clip, 'dumbbells');
-  rightDumbbell.visible = hasProp(clip, 'dumbbells') || hasProp(clip, 'dumbbell-right');
-
-  if (props.barbell.visible) {
-    const l = rig.arms[0].hand.getWorldPosition(tmpA);
-    const r = rig.arms[1].hand.getWorldPosition(tmpB);
-    props.barbell.position.copy(l).add(r).multiplyScalar(0.5);
-    props.barbell.quaternion.setFromUnitVectors(X_AXIS, l.sub(r).normalize());
-  }
-  if (props.seat.visible) {
-    const p = rig.body.getWorldPosition(tmpA);
-    props.seat.position.set(p.x, p.y - 0.13, p.z - 0.02);
-  }
+  });
 }

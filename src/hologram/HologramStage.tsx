@@ -1,8 +1,13 @@
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
 import { useEffect, useRef, useState } from 'react';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { AnimationId } from '../plan/types';
 import { HologramController } from './controller';
+import { HUMAN_MODEL_HASH } from './humanSkeleton';
 import { OrbitCamera } from './orbitCamera';
+
+/** Self-hosted CC0 human model (see docs/ASSETS.md); relative to the page. */
+export const MODEL_URL = `${import.meta.env.BASE_URL}models/human.glb?v=${HUMAN_MODEL_HASH}`;
 
 /** Degrees per press of the rotate buttons. */
 export const ROTATE_STEP_DEGREES = 30;
@@ -50,7 +55,9 @@ function HologramScene({
   playing,
   reducedMotion,
 }: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'>) {
-  const [controller] = useState(() => new HologramController(animation));
+  // Suspends (outer <Suspense> shows the loading text) until the model is parsed.
+  const gltf = useLoader(GLTFLoader, MODEL_URL);
+  const [controller] = useState(() => new HologramController(animation, gltf.scene));
   const invalidate = useThree((s) => s.invalidate);
 
   useEffect(() => controller.setAnimation(animation), [controller, animation]);
@@ -65,7 +72,7 @@ function HologramScene({
 
   return (
     <>
-      <primitive object={controller.rig.container} />
+      <primitive object={controller.root} />
       <mesh rotation-x={-Math.PI / 2} position-y={0.002} material={controller.discMaterial}>
         <circleGeometry args={[1.05, 64]} />
       </mesh>
