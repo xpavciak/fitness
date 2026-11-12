@@ -207,6 +207,7 @@ const I = {
   head: boneIndex('head'),
 };
 const SPINE_SHARE = [0.28, 0.24, 0.24, 0.24];
+const THUMB_OPPOSE = -35;
 
 interface ArmIdx {
   clavicle: number;
@@ -633,8 +634,10 @@ export class BodySolver {
     const c = Math.min(1, Math.max(0, fingers));
     local(pose, A.fingers1, q1.setFromAxisAngle(A.fingerAxis, c * 78 * DEG));
     local(pose, A.fingers2, q1.setFromAxisAngle(A.fingerAxis, c * 92 * DEG));
-    local(pose, A.thumb1, q1.setFromAxisAngle(A.thumbAxis, c * 22 * DEG));
-    local(pose, A.thumb2, q1.setFromAxisAngle(A.thumbAxis, c * 48 * DEG));
+    // Thumb: opposition across the palm, then flexion around the bar.
+    q1.setFromAxisAngle(A.restHandDir, A.sign * c * THUMB_OPPOSE * DEG);
+    local(pose, A.thumb1, q1.multiply(q2.setFromAxisAngle(A.thumbAxis, c * 18 * DEG)));
+    local(pose, A.thumb2, q1.setFromAxisAngle(A.thumbAxis, c * 65 * DEG));
   }
 
   private frameVector(arm: ArmIK, v: Vec, out: Vector3): Vector3 {

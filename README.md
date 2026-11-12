@@ -84,23 +84,51 @@ src/
   hologram/          3D figure (three.js via @react-three/fiber, lazy-loaded)
     orbitCamera.ts   three's OrbitControls configured for a scrollable page + button rotation
     webgl.ts         cached WebGL detection (probe context is released)
-    pose.ts          framework-free pose model + keyframe sampling
-    clips.ts         keyframed clips per animation id (squat, hinge, bench, press, row, ...)
-    rig.ts           procedural jointed humanoid + props (barbell, dumbbells, bench, seat)
-    materials.ts     holographic shaders (fresnel glow, scanlines, flicker, base disc, beam)
+    humanSkeleton.ts generated rest skeleton, hand/foot contacts, skin landmarks of human.glb
+    skeleton.ts      typed access to the skeleton data (bone indices, limb lengths, reach)
+    solver.ts        full-body pose solver: FK trunk, two-bone IK arms/legs, grips, feet, gaze
+    motion.ts        eased keyframe tracks (seconds), loop splines
+    clipKit.ts       clip/frame types, stances, centre-of-mass balance, contacts
+    clips.ts         one clip per animation id (tempo, bar path, contacts, breathing)
+    layout.ts        real-world equipment dimensions shared by clips and props
+    props.ts         barbell, dumbbells, benches, half rack, cable stations, treadmill, bike, mat
+    rig.ts           skinned human from public/models/human.glb + depth pre-pass twin
+    materials.ts     holographic shaders (skinned fresnel/contours/breathing, disc, beam)
     controller.ts    owns three.js objects and advances the animation each frame
-    HologramStage.tsx  R3F canvas with orbit controls
+    HologramStage.tsx  R3F canvas with orbit controls, loads the model (Suspense)
   components/        TodayView (home), Overview (start control), DayView, SwapControl,
                      ExerciseView, Hologram wrapper
                      (WebGL fallback), AppErrorBoundary, ...
   hooks/             hash routing, plan persistence, live "today", media queries
   routing.ts         hash route parsing/building
-docs/screenshots/    desktop and 390 px mobile screenshots (overview, day, exercise)
+public/models/       human.glb (CC0, see docs/ASSETS.md)
+scripts/             build-human-model.mjs (MakeHuman CC0 sources -> human.glb + humanSkeleton.ts)
+docs/ASSETS.md       sources and licences of third-party assets
+docs/screenshots/    desktop and 390 px mobile screenshots (overview, day, exercise, holograms)
 .github/workflows/ci.yml  install → lint → typecheck → test → build
 ```
 
-The hologram is built procedurally from capsules and spheres; no external models or assets.
-three.js and the scene live in a separate chunk that is only loaded when an exercise is opened.
+### Hologram
+
+The figure is a skinned, anatomically proportioned human (CC0 MakeHuman base mesh, 13.5 k
+vertices, 33 bones, ~480 KB `public/models/human.glb`; source and licence in
+[docs/ASSETS.md](docs/ASSETS.md)). It is drawn with a holographic shader – fresnel rim, soft key
+light shading, rest-space contour lines that follow the skin, scanlines, flicker – after a
+depth-only pre-pass, so only the front surface glows and the body reads as a solid volume.
+
+Motion is not keyframed joint angles but a small full-body solver (`solver.ts`): clips say where
+the hips are, how the spine bends, where the hands grip (bar, handles, floor) and where the feet
+stand; two-bone IK turns that into bone rotations, so feet stay planted and hands stay on the
+bar. Clips (`clips.ts`) follow the coaching tempo of each exercise (e.g. squat: 3 s down, 1 s
+pause, explosive drive, breath at the top), balance the centre of mass (or the bar) over the
+mid-foot, and add breathing, weight shift and gaze. Walking clips travel across the projector
+and re-materialise; running uses a treadmill. Tests in `src/hologram/*.test.ts` check contacts
+(feet ≤ 1 cm, hands ≤ 2 cm), bar paths, tempo and gait for every animation id.
+
+`GLTFLoader` reads the model natively (`KHR_mesh_quantization`, no Draco/meshopt WASM), so the
+CSP needs no `'wasm-unsafe-eval'`. The model URL carries a content hash and `/models/*` is cached
+as immutable. three.js, the loader and the scene live in a separate chunk that is only loaded
+when an exercise is opened.
 
 Note: `three` is pinned to `0.182.x` because `@react-three/fiber` 9 still uses `THREE.Clock`,
 which logs a deprecation warning from three r183 on.

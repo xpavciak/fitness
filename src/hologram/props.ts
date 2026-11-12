@@ -94,6 +94,7 @@ export function createProps(material: Material, depthMaterial: Material): Props 
   };
   const group = (kind: PropKind) => {
     const g = new Group();
+    g.name = kind;
     g.visible = false;
     kinds.set(kind, g);
     root.add(g);
@@ -142,6 +143,8 @@ export function createProps(material: Material, depthMaterial: Material): Props 
   };
   const dumbbellGroup = group('dumbbells');
   const dumbbells: Record<Side, Group> = { l: makeDumbbell(), r: makeDumbbell() };
+  dumbbells.l.name = 'dumbbell-l';
+  dumbbells.r.name = 'dumbbell-r';
   dumbbellGroup.add(dumbbells.l, dumbbells.r);
   const singleGroup = group('dumbbell-right');
   const single = makeDumbbell();

@@ -48,7 +48,8 @@ function Fallback({ children }: { children: ReactNode }) {
 export function Hologram({ webgl, onUnavailable, exerciseName, ...stage }: HologramProps) {
   const noWebgl = (
     <Fallback>
-      3D ukážka nie je dostupná, pretože prehliadač nepodporuje WebGL. Riaď sa popisom techniky.
+      3D ukážka nie je dostupná – prehliadač nepodporuje WebGL alebo sa model nepodarilo načítať.
+      Riaď sa popisom techniky.
     </Fallback>
   );
   if (!webgl) return noWebgl;

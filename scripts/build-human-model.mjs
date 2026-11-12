@@ -397,11 +397,18 @@ function handData(S, s) {
     (p) => dot(sub(p, centre), palm),
   );
   const depth = dot(sub(palmSkin, centre), palm);
+  // Palm skin at the knuckle line: the bar sits just beyond it, inside the fingers.
+  const knuckleSkin = extreme(
+    (p, b) =>
+      (b === `${s}Hand` || b === `${s}Fingers1`) && Math.hypot(...sub(p, hand.tail)) < 0.025,
+    (p) => dot(sub(p, hand.tail), palm),
+  );
+  const knuckleDepth = dot(sub(knuckleSkin, hand.tail), palm);
   return {
     across,
     palm,
     /** Bar axis position inside the closed fist (rest coordinates). */
-    grip: hand.tail.map((v, k) => round(v + palm[k] * (depth + 0.012) - dir[k] * 0.012, 4)),
+    grip: hand.tail.map((v, k) => round(v + palm[k] * (knuckleDepth + 0.018) + dir[k] * 0.04, 4)),
     /** Palm skin centre for hands flat on the floor/bench. */
     palmSkin: centre.map((v, k) => round(v + palm[k] * depth, 4)),
   };
