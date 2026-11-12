@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ModelLoadError, ModelMismatchError } from './modelError';
+import { ModelLoadError, ModelMismatchError, retryModelLoad } from './modelError';
 import { loadHumanModel, MODEL_URL } from './modelLoader';
 
 const glb = () => {
@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe('loadHumanModel', () => {
-  it('rejects an HTML page served instead of the model, then retries on the next call', async () => {
+  it('rejects an HTML page served instead of the model and fetches again only on retry', async () => {
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(() => respond('<!doctype html><html></html>', 200, 'text/html'))
@@ -31,7 +31,12 @@ describe('loadHumanModel', () => {
     const failed = loadHumanModel();
     await expect(failed).rejects.toBeInstanceOf(ModelLoadError);
     await expect(failed).rejects.toThrow(/not a binary glTF \(text\/html\)/);
+    // Re-renders keep seeing the same failure (no request loop)...
+    expect(loadHumanModel()).toBe(failed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    // ...until a retry.
+    retryModelLoad();
     const scene = await loadHumanModel();
     expect(scene.getObjectByName('lShin')).toBeDefined();
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -44,7 +49,7 @@ describe('loadHumanModel', () => {
   it('wraps HTTP and network errors in ModelLoadError', async () => {
     vi.resetModules();
     const { loadHumanModel: load } = await import('./modelLoader');
-    const { ModelLoadError: LoadError } = await import('./modelError');
+    const { ModelLoadError: LoadError, retryModelLoad: retry } = await import('./modelError');
     vi.stubGlobal(
       'fetch',
       vi
@@ -53,6 +58,7 @@ describe('loadHumanModel', () => {
         .mockImplementationOnce(() => Promise.reject(new TypeError('Failed to fetch'))),
     );
     await expect(load()).rejects.toThrow(/HTTP 404/);
+    retry();
     const error = await load().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(LoadError);
     expect((error as Error).cause).toBeInstanceOf(TypeError);

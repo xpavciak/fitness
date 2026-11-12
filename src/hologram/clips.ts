@@ -378,8 +378,8 @@ function press(kind: 'bench' | 'bench-dumbbells' | 'incline'): Clip {
       const k = down(t);
       // Feet flat, about hip-and-a-half wide, just in front of the knees.
       const legs: Record<Side, LegTarget> = both((s) => ({
-        foot: flatFoot(s, incline ? 0.21 : 0.23, feetZ, 14),
-        knee: [sx(s, 0.25), 0.8, 0.5],
+        foot: flatFoot(s, incline ? 0.2 : 0.21, feetZ, 12),
+        knee: [sx(s, 0.12), 0.8, 0.5],
       }));
       const targets: BodyTargets = {
         hips: { pos: [0, 0.6, hipsZ], pitch: -90 + angle },

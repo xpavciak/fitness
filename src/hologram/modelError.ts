@@ -24,3 +24,19 @@ export class ModelMismatchError extends ModelLoadError {
 export function isModelLoadError(error: unknown): error is ModelLoadError {
   return error instanceof ModelLoadError;
 }
+
+const retryListeners = new Set<() => void>();
+
+/** Registers a callback that drops a failed model load (used by the loader). */
+export function onModelRetry(listener: () => void): void {
+  retryListeners.add(listener);
+}
+
+/**
+ * Asks the loader to forget a failed load so the next render fetches again.
+ * A failed load stays cached until then: React re-renders after a rejected
+ * promise and must see the same rejection, not start a new request.
+ */
+export function retryModelLoad(): void {
+  retryListeners.forEach((listener) => listener());
+}

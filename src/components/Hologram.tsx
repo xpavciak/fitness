@@ -1,5 +1,5 @@
 import { Component, Suspense, lazy, type ReactNode } from 'react';
-import { isModelLoadError } from '../hologram/modelError';
+import { isModelLoadError, retryModelLoad } from '../hologram/modelError';
 import type { AnimationId } from '../plan';
 
 // three.js and the scene are only downloaded when an exercise is opened.
@@ -29,6 +29,12 @@ class HologramErrorBoundary extends Component<
 > {
   state: { failure: Failure } = { failure: null };
 
+  constructor(props: HologramErrorBoundary['props']) {
+    super(props);
+    // Opening another exercise tries a previously failed model download again.
+    retryModelLoad();
+  }
+
   static getDerivedStateFromError(error: unknown): { failure: Failure } {
     return { failure: isModelLoadError(error) ? 'model' : 'runtime' };
   }
@@ -40,7 +46,10 @@ class HologramErrorBoundary extends Component<
     if (!isModelLoadError(error)) this.props.onUnavailable();
   }
 
-  private retry = () => this.setState({ failure: null });
+  private retry = () => {
+    retryModelLoad();
+    this.setState({ failure: null });
+  };
 
   render() {
     const { failure } = this.state;

@@ -1,21 +1,30 @@
 import type { Object3D } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { HUMAN_MODEL_HASH } from './humanSkeleton';
-import { ModelLoadError } from './modelError';
+import { ModelLoadError, onModelRetry } from './modelError';
 
 /** Self-hosted CC0 human model (see docs/ASSETS.md); relative to the page. */
 export const MODEL_URL = `${import.meta.env.BASE_URL}models/human.glb?v=${HUMAN_MODEL_HASH}`;
 
 let pending: Promise<Object3D> | null = null;
+let failed = false;
+
+// A retry (button, or the next exercise opened) drops a failed load.
+onModelRetry(() => {
+  if (failed) {
+    pending = null;
+    failed = false;
+  }
+});
 
 /**
  * Loads the human model once and shares it (each controller clones it). A
- * failed load is not cached, so the next call - a retry or the next exercise
- * opened - fetches again.
+ * failed load stays cached until retryModelLoad(), so the re-render after the
+ * rejection sees the error instead of starting another request.
  */
 export function loadHumanModel(): Promise<Object3D> {
   pending ??= fetchModel(MODEL_URL).catch((error: unknown) => {
-    pending = null;
+    failed = true;
     throw error instanceof ModelLoadError
       ? error
       : new ModelLoadError('Human model could not be loaded', { cause: error });
