@@ -1,7 +1,9 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useRef, useState } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
+import type { Object3D } from 'three';
 import type { AnimationId } from '../plan/types';
 import { HologramController } from './controller';
+import { loadHumanModel } from './modelLoader';
 import { OrbitCamera } from './orbitCamera';
 
 /** Degrees per press of the rotate buttons. */
@@ -49,8 +51,9 @@ function HologramScene({
   animation,
   playing,
   reducedMotion,
-}: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'>) {
-  const [controller] = useState(() => new HologramController(animation));
+  model,
+}: Pick<HologramStageProps, 'animation' | 'playing' | 'reducedMotion'> & { model: Object3D }) {
+  const [controller] = useState(() => new HologramController(animation, model));
   const invalidate = useThree((s) => s.invalidate);
 
   useEffect(() => controller.setAnimation(animation), [controller, animation]);
@@ -65,7 +68,7 @@ function HologramScene({
 
   return (
     <>
-      <primitive object={controller.rig.container} />
+      <primitive object={controller.root} />
       <mesh rotation-x={-Math.PI / 2} position-y={0.002} material={controller.discMaterial}>
         <circleGeometry args={[1.05, 64]} />
       </mesh>
@@ -86,6 +89,10 @@ function HologramScene({
 
 /** 3D hologram canvas. Default export so it can be lazy-loaded. */
 export default function HologramStage({ label, turns, ...sceneProps }: HologramStageProps) {
+  // Suspends (outer <Suspense> shows the loading text) until the model is
+  // parsed. Loading outside <Canvas> keeps failures in this React tree, where
+  // the error boundary offers a retry.
+  const model = use(loadHumanModel());
   return (
     <Canvas
       className="hologram-canvas"
@@ -100,7 +107,7 @@ export default function HologramStage({ label, turns, ...sceneProps }: HologramS
       role="img"
       aria-label={label}
     >
-      <HologramScene {...sceneProps} />
+      <HologramScene {...sceneProps} model={model} />
       <CameraControls turns={turns} />
     </Canvas>
   );

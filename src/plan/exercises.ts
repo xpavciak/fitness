@@ -643,7 +643,7 @@ const EXERCISE_LIST: Exercise[] = [
     ],
     easier: 'Intervaly na rotopede (rovnaký čas a intenzita)',
     harder: 'Intervaly do mierneho kopca',
-    animation: 'run',
+    animation: 'run-intervals',
   },
   {
     id: 'stationary-bike',
